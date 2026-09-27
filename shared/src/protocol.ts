@@ -85,6 +85,8 @@ export interface Snap {
   lb: LeaderRow[];
   /** Finalistas do Duelo Final, quando ele está acontecendo. */
   duel: { a: string; b: string } | null;
+  /** Eventos visuais dentro do raio de visão. Ausente quando não há evento. */
+  fx?: FxEvent[];
 }
 
 export interface FighterInfo {
@@ -155,5 +157,44 @@ export type ServerMsg =
       history: HistoryItem[];
     }
   | { t: 'error'; msg: string };
+
+// ---------- Efeitos visuais (não mudam o jogo) ----------
+
+/** Bits de FxEvent 'h'.fl */
+export const FX_CHARGED = 1; // golpe carregado (×2): o atacante estava Carregado no início do turno
+export const FX_CLASH = 2; // "Ataques se chocaram": sai um 'h' para cada lado no mesmo tick
+export const FX_KO = 4; // o alvo terminou o turno com HP <= 0
+
+/** Ms depois de receber o b_reveal (painel) ou o snapshot com o 'h' (mundo) em que o golpe acerta. Relógio único das duas frentes de cliente. */
+export const FX_IMPACT_MS = 600;
+
+/** Teto de eventos por tick; o excedente é descartado. */
+export const FX_MAX_PER_TICK = 48;
+
+/**
+ * Eventos visuais do tick. x/y em tiles (o centro de uma batalha pode ser .5).
+ * A ordem do array segue a ordem em que tudo aconteceu no tick (ex.: 'c' vem antes do 'v' que ele causou).
+ */
+export type FxEvent =
+  /** Batalha começou. a = quem iniciou (sempre jogador), b = alvo. kd: p = PvP, w = selvagem, f = Duelo Final. */
+  | { k: 'bt'; x: number; y: number; id: number; a: number; b: number; kd: 'p' | 'w' | 'f' }
+  /** Golpe com dano > 0. bt = id da batalha. act = ação do atacante. m = eficácia: 1 (>1), -1 (<1), 0. fl = bits FX_*. hp = HP do alvo depois do turno. */
+  | { k: 'h'; x: number; y: number; bt: number; a: number; d: number; v: number; act: Action; m: -1 | 0 | 1; fl: number; hp: number }
+  /** Fúria da arena no Duelo Final: dano va em a e vb em b, sem atacante. */
+  | { k: 'fu'; x: number; y: number; bt: number; a: number; b: number; va: number; vb: number }
+  /** O jogador p comeu o selvagem w, do elemento e. x2 = XP em dobro pela Fome. x/y = tile do selvagem. */
+  | { k: 'c'; x: number; y: number; p: number; w: number; e: Elem; x2?: 1 }
+  /** Roubo de estágio: w venceu l, que perdeu n estágios. tr = w já estava na forma final e ganhou troféu. cr = l tinha a Coroa. x/y = vencedor. */
+  | { k: 's'; x: number; y: number; w: number; l: number; n: 1 | 2; tr?: 1; cr?: 1 }
+  /** Evolução por XP. s = estágio novo. */
+  | { k: 'v'; x: number; y: number; id: number; s: Stage }
+  /** A zona queimou um estágio. s = estágio novo. */
+  | { k: 'z'; x: number; y: number; id: number; s: Stage }
+  /** Eliminação (a entidade já some do snapshot deste tick). by = id de quem eliminou (0 = ninguém). r: b = batalha, z = zona, d = cortado no Duelo Final. */
+  | { k: 'x'; x: number; y: number; id: number; f: Form; s: Stage; o: Elem[]; by: number; r: 'b' | 'z' | 'd' }
+  /** Selvagem surgiu (não é emitido no povoamento inicial). */
+  | { k: 'w'; x: number; y: number; id: number; e: Elem };
+
+export type FxKind = FxEvent['k'];
 
 export const WS_PATH = '/ws';
