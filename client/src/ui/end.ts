@@ -54,7 +54,7 @@ export function showEnd(msg: EndMsg, onAgain: () => void, onMenu: () => void): v
               onclick: () => {
                 const a = document.createElement('a');
                 a.href = card.toDataURL('image/png');
-                a.download = 'vira-bicho.png';
+                a.download = 'batlle-bicho.png';
                 a.click();
               },
             },

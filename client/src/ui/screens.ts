@@ -59,7 +59,7 @@ export function showMenu(onPlay: (req: PlayRequest) => void, error = ''): void {
       h(
         'div',
         { class: 'stack' },
-        h('h1', { class: 'logo' }, 'VIRA-BICHO'),
+        h('h1', { class: 'logo' }, 'BATLLE-BICHO'),
         h('p', { class: 'tagline' }, 'Você vira o que você come. Quem perde entrega a evolução.'),
         preview,
         h(
@@ -112,7 +112,7 @@ export function showLobby(msg: Extract<ServerMsg, { t: 'lobby' }>, handlers: Lob
                 onclick: async (e: Event) => {
                   const btn = e.currentTarget as HTMLButtonElement;
                   try {
-                    if (navigator.share) await navigator.share({ title: 'VIRA-BICHO', text: 'Bora uma partida de VIRA-BICHO?', url: link });
+                    if (navigator.share) await navigator.share({ title: 'BATLLE-BICHO', text: 'Bora uma partida de BATLLE-BICHO?', url: link });
                     else await navigator.clipboard.writeText(link);
                     btn.textContent = 'Link copiado!';
                   } catch {

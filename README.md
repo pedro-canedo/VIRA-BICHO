@@ -1,10 +1,10 @@
-# VIRA-BICHO
+# BATLLE-BICHO
 
 Battle royale de monstrinhos para o navegador. Você nasce como um ovo, **vira o que você come** e, se perder uma batalha, **o vencedor rouba a sua evolução**.
 
 Partidas de ~5 minutos, 8 a 16 jogadores (bots completam a arena), controle só com mouse ou toque.
 
-**Jogar:** https://virabicho.caixazen.online
+**Jogar:** https://batllebicho.caixazen.online
 
 ## Como funciona
 
@@ -67,7 +67,7 @@ npm start          # roda o build em :3000
 
 ## Deploy (celular com Termux)
 
-O servidor roda num Motorola One Hyper reaproveitado (Termux + runit), exposto pela Cloudflare Tunnel em `virabicho.caixazen.online` → `http://localhost:3000`. A Cloudflare atende nas portas 443 (HTTPS/WSS) e repassa pelo túnel.
+O servidor roda num Motorola One Hyper reaproveitado (Termux + runit), exposto pela Cloudflare Tunnel em `batllebicho.caixazen.online` → `http://localhost:3000`. A Cloudflare atende nas portas 443 (HTTPS/WSS) e repassa pelo túnel.
 
 ```bash
 bash scripts/setup-phone.sh   # uma vez: rsync + serviço runit "vira-bicho"

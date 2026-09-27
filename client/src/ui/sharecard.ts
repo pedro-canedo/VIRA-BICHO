@@ -29,7 +29,7 @@ export function buildShareCard(opts: { name: string; look: Look; place: number; 
 
   ctx.fillStyle = '#ffcf3f';
   ctx.font = '22px "Press Start 2P", monospace';
-  ctx.fillText('VIRA-BICHO', 330, 60);
+  ctx.fillText('BATLLE-BICHO', 330, 60);
   ctx.fillStyle = '#ffffff';
   ctx.font = '900 34px Nunito, sans-serif';
   ctx.fillText(speciesName(opts.look.form, opts.look.stage), 330, 112);
@@ -59,6 +59,6 @@ export function buildShareCard(opts: { name: string; look: Look; place: number; 
   });
   ctx.fillStyle = '#6f6499';
   ctx.font = '800 15px Nunito, sans-serif';
-  ctx.fillText('virabicho.caixazen.online', 330, 380);
+  ctx.fillText(location.host, 330, 380);
   return c;
 }
