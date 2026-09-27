@@ -220,6 +220,20 @@ export function confetti(x: number, y: number, n: number, cs: string[], o: { ang
   start();
 }
 
+/** Quadradinhos que nascem num anel de raio `radius` (px) e convergem para (x, y) em `ms`. */
+export function converge(x: number, y: number, n: number, cs: string[], radius: number, ms: number): void {
+  if (!ensure() || !cs.length) return;
+  const count = Math.max(1, Math.round(n * tier * (reduced() ? 0.4 : 1)));
+  const v = radius / S / (ms / 1000);
+  for (let k = 0; k < count; k++) {
+    const ang = (k / count) * Math.PI * 2 + rnd(-0.2, 0.2);
+    const cx = Math.cos(ang);
+    const cy = Math.sin(ang);
+    spawn((x + cx * radius) / S, (y + cy * radius) / S, -cx * v, -cy * v, ms, col(cs[k % cs.length]), 1, 0, 0);
+  }
+  start();
+}
+
 /** Feitiço da forma `form` de `from` até `to`, começando em t0 (performance.now) e durando `dur` ms. */
 export function spell(form: Form, from: Pt, to: Pt, t0: number, dur: number, o: { size?: number; charged?: boolean } = {}): void {
   if (!ensure() || STYLE[form] === 'poeira') return;
@@ -456,4 +470,70 @@ function frame(now: number): void {
   }
   raf = busy ? requestAnimationFrame(frame) : 0;
   if (!busy) c.clearRect(0, 0, canvas.width, canvas.height);
+}
+
+// ---------- círculo de runas (canvas gerado ponto a ponto, uma vez por cor e tamanho) ----------
+
+const GLYPH5 = ['00100|01110|10101|00100|00100', '10001|01010|00100|01010|10001', '11111|00100|01110|00100|11111', '10100|10100|11111|00101|00101', '01110|10001|10101|10001|01110', '11100|00100|11111|00100|00111', '10001|11011|10101|10001|10001', '00100|01010|10001|01010|00100'];
+const GLYPH3 = ['010|111|010', '101|010|101', '111|010|111', '110|010|011', '010|101|010', '111|101|111', '100|111|001', '011|010|110'];
+const runeCache = new Map<string, HTMLCanvasElement>();
+
+function plotRing(c: CanvasRenderingContext2D, cx: number, cy: number, r: number): void {
+  const n = Math.ceil(Math.PI * 2 * r * 2);
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    c.fillRect(Math.round(cx + Math.cos(a) * r), Math.round(cy + Math.sin(a) * r), 1, 1);
+  }
+}
+
+function drawRunes(size: number, color: string): HTMLCanvasElement {
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = size;
+  const c = cv.getContext('2d');
+  if (!c) return cv;
+  const m = (size - 1) / 2;
+  const big = size >= 96;
+  const r1 = m - 1;
+  const r2 = r1 - (big ? 3 : 2);
+  const g = big ? 5 : 3;
+  const r3 = r2 - g - (big ? 6 : 4);
+  c.fillStyle = color;
+  plotRing(c, m, m, r1);
+  plotRing(c, m, m, r2);
+  plotRing(c, m, m, r3);
+  // Hexagrama: dois triângulos inscritos no anel de dentro
+  for (const base of [-90, 90]) {
+    const pts = [0, 1, 2].map((k) => {
+      const a = ((base + k * 120) * Math.PI) / 180;
+      return [m + Math.cos(a) * (r3 - 1), m + Math.sin(a) * (r3 - 1)];
+    });
+    for (let k = 0; k < 3; k++) line(c, pts[k][0], pts[k][1], pts[(k + 1) % 3][0], pts[(k + 1) % 3][1]);
+  }
+  // 8 runas entre os anéis e um ponto branco entre elas
+  const rr = (r2 + r3) / 2;
+  const set = big ? GLYPH5 : GLYPH3;
+  for (let k = 0; k < 8; k++) {
+    const a = ((k * 45 - 90) * Math.PI) / 180;
+    const gx = Math.round(m + Math.cos(a) * rr - (g - 1) / 2);
+    const gy = Math.round(m + Math.sin(a) * rr - (g - 1) / 2);
+    const rows = set[k].split('|');
+    c.fillStyle = color;
+    for (let y = 0; y < g; y++) for (let x = 0; x < g; x++) if (rows[y][x] === '1') c.fillRect(gx + x, gy + y, 1, 1);
+    const b = a + Math.PI / 8;
+    c.fillStyle = '#ffffff';
+    c.fillRect(Math.round(m + Math.cos(b) * r1), Math.round(m + Math.sin(b) * r1), 1, 1);
+  }
+  return cv;
+}
+
+/** Cópia de um círculo de runas `size`×`size` na cor pedida (o desenho é gerado uma vez por cor e tamanho). */
+export function runeCanvas(color: string, size = 128): HTMLCanvasElement {
+  const key = `${color}|${size}`;
+  let src = runeCache.get(key);
+  if (!src) runeCache.set(key, (src = drawRunes(size, color)));
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = size;
+  cv.className = 'runes';
+  cv.getContext('2d')?.drawImage(src, 0, 0);
+  return cv;
 }

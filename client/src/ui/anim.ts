@@ -142,3 +142,46 @@ export class GhostBar {
     this.frac = frac;
   }
 }
+
+// ---------- texto digitado e carimbo ----------
+
+const typing = new Map<HTMLElement, number>();
+
+/** Digita `text` letra a letra (`ms` por letra). Com reduced-motion escreve direto. */
+export function typeText(el: HTMLElement, text: string, ms = 40): void {
+  window.clearTimeout(typing.get(el));
+  typing.delete(el);
+  if (reducedFlag || text.length < 2) {
+    el.textContent = text;
+    return;
+  }
+  let i = 0;
+  const step = () => {
+    i++;
+    el.textContent = text.slice(0, i);
+    if (i < text.length) typing.set(el, window.setTimeout(step, ms));
+    else typing.delete(el);
+  };
+  step();
+}
+
+/** Entrada de carimbo: escala `from`→1 em degraus; com reduced-motion vira fade. Usa a propriedade `scale` (não briga com transform). */
+export function stampIn(el: Element, owner?: Anims, o: { from?: number; ms?: number; delay?: number; rot?: [number, number] } = {}): void {
+  const delay = o.delay ?? 0;
+  if (reducedFlag) {
+    play(el, [{ opacity: 0 }, { opacity: 1 }], { duration: 150, delay, fill: 'backwards' }, owner);
+    return;
+  }
+  const from = o.from ?? 2;
+  const kf: Keyframe[] = [
+    { scale: String(from), opacity: 0 },
+    { scale: '0.9', opacity: 1, offset: 0.7 },
+    { scale: '1', opacity: 1 },
+  ];
+  if (o.rot) {
+    kf[0].rotate = `${o.rot[0]}deg`;
+    kf[1].rotate = `${o.rot[1]}deg`;
+    kf[2].rotate = `${o.rot[1]}deg`;
+  }
+  play(el, kf, { duration: o.ms ?? 220, delay, easing: 'steps(3)', fill: o.rot ? 'both' : 'backwards' }, owner);
+}

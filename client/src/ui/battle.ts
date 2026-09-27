@@ -1,14 +1,18 @@
-import { attackElem, BALANCE, FORM_LABEL, FX_IMPACT_MS, speciesName, typeMult, type Action, type FighterInfo, type ServerMsg } from '@vb/shared';
+import { attackElem, BALANCE, FORM_LABEL, FX_IMPACT_MS, speciesName, typeMult, type Action, type Elem, type FighterInfo, type ServerMsg } from '@vb/shared';
 import { creatureImg } from '../render/creature';
-import { ELEM_TONE } from '../render/palette';
-import { Anims, countTo, GhostBar, later, play, reduced, vibrate } from './anim';
+import { ELEM_TONE, FORM_COLOR } from '../render/palette';
+import { Anims, countTo, GhostBar, later, play, reduced, stampIn, vibrate } from './anim';
 import { h, mount } from './dom';
-import { bolt, burst, confetti, RAMP, spell, type Pt } from './fxcanvas';
+import { bolt, burst, confetti, converge, RAMP, spell, type Pt } from './fxcanvas';
 
 const ICON: Record<Action, string> = { ataque: '⚔️', defesa: '🛡️', carga: '⚡' };
 const NAME: Record<Action, string> = { ataque: 'Ataque', defesa: 'Defesa', carga: 'Carga' };
 const BEATS: Record<Action, string> = { ataque: 'vence Carga', defesa: 'vence Ataque', carga: 'vence Defesa' };
+const ELEM_ICON: Record<Elem, string> = { brasa: '🔥', mare: '🌊', broto: '🌿' };
 const ACT_COLOR: Record<Action, string> = { ataque: '#ff4f6d', defesa: '#7cc4ff', carga: '#ffcf3f' };
+const CHARGED_TEXT = '⚡ Carregado: próximo golpe ×2';
+/** Silhueta amarela do lampejo de Carga. */
+const GOLD = 'brightness(0) invert(1) sepia(1) saturate(8)';
 
 type Start = Extract<ServerMsg, { t: 'b_start' }>;
 type Reveal = Extract<ServerMsg, { t: 'b_reveal' }>;
@@ -38,7 +42,7 @@ function fighterView(info: FighterInfo, side: Side, spectate: boolean): FighterV
   const bar = new GhostBar();
   bar.set(info.hp / info.mhp);
   const hp = h('div', { class: 'hpnum' }, `${info.hp}/${info.mhp}`);
-  const charged = h('div', { class: 'charged' }, info.charged ? '⚡ Carregado: próximo golpe ×2' : '');
+  const charged = h('div', { class: `charged${info.charged ? ' on' : ''}` }, info.charged ? CHARGED_TEXT : '');
   const body = h('div', { class: 'fbody' }, creatureImg(info.look, 3));
   const species = info.wild ? FORM_LABEL[info.look.form] : `${speciesName(info.look.form, info.look.stage)} · ${FORM_LABEL[info.look.form]}`;
   const root = h(
@@ -51,6 +55,7 @@ function fighterView(info: FighterInfo, side: Side, spectate: boolean): FighterV
     hp,
     charged,
   );
+  if (info.charged) root.classList.add('charging');
   return { root, body, bar, hp, charged, info, hpNow: info.hp, side };
 }
 
@@ -81,6 +86,12 @@ export class BattleUi {
   private timerEl = h('div', { class: 'timer' });
   private timerBar = h('i');
   private turnEl = h('div', { class: 'vs' });
+  private digitEl: HTMLElement | null = null;
+  private digit = 0;
+  private tense = false;
+  /** Tarjas de cinema (topo e base), criadas pelo próprio painel. */
+  private cine: HTMLElement[] = [];
+  private embers = 0;
   private actionsEl = h('div', { class: 'actions' });
   private buttons: HTMLButtonElement[] = [];
   private raf = 0;
@@ -118,18 +129,20 @@ export class BattleUi {
     });
     this.actionsEl.append(...this.buttons);
     if (this.spectate) this.revealEl.classList.add('named');
+    // Raio pixel do VS nas cores dos dois elementos
+    const vsBolt = h('i', { class: 'vsbolt' });
     this.root = mount(
       h(
         'div',
-        { class: 'battle' },
-        h('div', { class: 'duel' }, this.you.root, h('div', {}, this.turnEl), this.opp.root),
+        { class: `battle ${msg.kind}` },
+        h('div', { class: 'duel' }, this.you.root, h('div', { class: 'vsmid' }, vsBolt, this.turnEl), this.opp.root),
         this.revealEl,
         this.textEl,
         this.timerEl,
         this.spectate ? h('div', { class: 'muted small', style: 'text-align:center' }, '👀 Você está assistindo') : this.actionsEl,
       ),
     );
-    if (msg.kind === 'final') this.root.classList.add('final');
+    this.frame(msg);
     this.textEl.textContent = this.spectate
       ? `DUELO FINAL: ${msg.you.name} contra ${msg.opp.name}!`
       : msg.kind === 'final'
@@ -137,8 +150,55 @@ export class BattleUi {
         : msg.kind === 'wild'
           ? 'Um bicho selvagem! Escolha sua ação.'
           : 'Duelo! Escolha em segredo.';
+    if (msg.kind === 'wild') stampIn(this.textEl, undefined, { from: 1.4, ms: 200 });
     this.startTurn(msg.turn, msg.ms);
     window.addEventListener('keydown', this.onKey);
+  }
+
+  /** Moldura do encontro: borda nas cores dos dois bichos, tarjas de cinema e, no Duelo Final, faixa e brasas. */
+  private frame(msg: Start): void {
+    const c1 = FORM_COLOR[msg.you.look.form];
+    const c2 = FORM_COLOR[msg.opp.look.form];
+    const st = this.root.style;
+    // No Duelo Final a borda dupla magenta/dourada vem do CSS (.battle.final)
+    if (msg.kind !== 'final') {
+      st.setProperty('--c1', msg.kind === 'wild' ? c2 : c1);
+      st.setProperty('--c2', c2);
+    }
+    st.setProperty('--b1', c1);
+    st.setProperty('--b2', c2);
+    const rm = reduced();
+    for (const side of ['top', 'bot'] as const) {
+      const bar = h('div', { class: `cine ${side}` });
+      document.getElementById('ui')?.prepend(bar);
+      if (!rm) play(bar, [{ transform: `translateY(${side === 'top' ? -100 : 100}%)` }, { transform: 'translateY(0)' }], { duration: 200, easing: 'steps(4)' });
+      this.cine.push(bar);
+    }
+    if (msg.kind !== 'final') return;
+    const band = h('div', { class: 'fband' }, 'DUELO FINAL');
+    this.root.append(band);
+    stampIn(band, undefined, { from: 2, ms: 220, delay: 120 });
+    // Brasas subindo pelas laterais: 1 a cada 200 ms
+    this.embers = window.setInterval(() => {
+      if (!this.root.isConnected) return;
+      const r = this.root.getBoundingClientRect();
+      const left = Math.random() < 0.5;
+      burst(left ? r.left + 2 : r.right - 2, r.top + r.height * (0.35 + Math.random() * 0.6), 1, ['#ff4f6d', '#ffd27a'], { angle: [-100, -80], speed: [30, 60], life: [700, 1100], gravity: -30, add: true, shrink: true });
+    }, 200);
+  }
+
+  private dropFrame(animate: boolean): void {
+    window.clearInterval(this.embers);
+    this.embers = 0;
+    for (const bar of this.cine) {
+      if (!animate || reduced()) {
+        bar.remove();
+        continue;
+      }
+      play(bar, [{ transform: 'translateY(0)' }, { transform: `translateY(${bar.classList.contains('top') ? -100 : 100}%)` }], { duration: 200, easing: 'steps(4)', fill: 'forwards' });
+      window.setTimeout(() => bar.remove(), 200);
+    }
+    this.cine = [];
   }
 
   private onKey = (e: KeyboardEvent) => {
@@ -157,9 +217,13 @@ export class BattleUi {
     this.flush();
     this.fx.cancel();
     this.turnEl.textContent = `TURNO ${turn}`;
+    stampIn(this.turnEl, this.fx, { from: 2, ms: 180 });
     this.chosen = null;
     this.revealed = false;
-    this.actionsEl.classList.remove('picked');
+    this.setTense(false);
+    this.digit = 0;
+    this.digitEl = null;
+    this.actionsEl.classList.remove('picked', 'hesitou');
     this.buttons.forEach((b) => {
       b.disabled = false;
       b.classList.remove('chosen', 'press');
@@ -178,6 +242,8 @@ export class BattleUi {
     this.deadline = performance.now() + ms;
     this.windowMs = ms;
     cancelAnimationFrame(this.raf);
+    // Contagem tensa: últimos 3 s (2 s contra selvagem), só enquanto você ainda não escolheu
+    const tenseMs = this.kind === 'wild' ? 2000 : 3000;
     const tick = () => {
       const left = Math.max(0, this.deadline - performance.now());
       this.timerBar.style.transform = `scaleX(${left / this.windowMs})`;
@@ -186,14 +252,53 @@ export class BattleUi {
         this.timerEl.className = `timer ${cls}`;
         this.timerCls = cls;
       }
+      const hot = !this.spectate && !this.chosen && !this.revealed && left > 0 && left <= tenseMs;
+      if (hot !== this.tense) this.setTense(hot);
+      if (hot) {
+        const d = Math.ceil(left / 1000);
+        if (d !== this.digit) this.showDigit(d);
+      }
       if (left > 0) this.raf = requestAnimationFrame(tick);
+      else if (!this.spectate && !this.chosen && !this.revealed) this.hesitate();
     };
     tick();
+  }
+
+  private setTense(on: boolean): void {
+    this.tense = on;
+    this.root.classList.toggle('tense', on);
+    if (!on && this.digitEl) {
+      this.digitEl.remove();
+      this.digitEl = null;
+    }
+  }
+
+  /** Dígito grande sobre as cartas a cada virada de segundo. */
+  private showDigit(d: number): void {
+    this.digit = d;
+    this.digitEl?.remove();
+    const el = h('b', { class: `cdigit${d === 1 ? ' crit' : ''}` }, String(d));
+    this.revealEl.append(el);
+    this.digitEl = el;
+    if (reduced()) play(el, [{ opacity: 0 }, { opacity: 1, offset: 0.15 }, { opacity: 0.6 }], { duration: 900, fill: 'forwards' }, this.fx);
+    else {
+      play(el, [{ scale: '1.8' }, { scale: '1' }], { duration: 160, easing: 'cubic-bezier(.2,1.6,.4,1)' }, this.fx);
+      play(el, [{ opacity: 1 }, { opacity: 0.6 }], { delay: 160, duration: 700, fill: 'forwards' }, this.fx);
+    }
+    vibrate(8);
+  }
+
+  /** O tempo acabou sem escolha: os botões tremem e ficam cinza. */
+  private hesitate(): void {
+    this.setTense(false);
+    this.actionsEl.classList.add('hesitou');
+    if (!reduced()) play(this.actionsEl, [{ translate: '3px 0' }, { translate: '-3px 0' }, { translate: '3px 0' }, { translate: '-3px 0' }, { translate: '0 0' }], { duration: 150, easing: 'steps(4)' }, this.fx);
   }
 
   private choose(a: Action): void {
     if (this.spectate || this.chosen || this.buttons[0].disabled) return;
     this.chosen = a;
+    this.setTense(false);
     this.onAct(a);
     this.actionsEl.classList.add('picked');
     const btn = this.buttons.find((b) => b.classList.contains(a))!;
@@ -233,6 +338,8 @@ export class BattleUi {
     this.buttons.forEach((b) => (b.disabled = true));
     this.flush();
     this.revealed = true;
+    this.setTense(false);
+    this.actionsEl.classList.remove('hesitou');
     const rm = reduced();
     const { you: yc, opp: oc } = this.cards;
     this.readyEl?.remove();
@@ -354,7 +461,44 @@ export class BattleUi {
     const mhp = v.info.mhp;
     countTo(v.hp, v.hpNow, hp, 300, (n) => `${n}/${mhp}`);
     v.hpNow = hp;
-    v.charged.textContent = ch ? '⚡ Carregado: próximo golpe ×2' : '';
+    this.setCharge(v, ch);
+  }
+
+  /** Aura de Carga: acende com quadradinhos convergindo e some em 150 ms quando a carga é gasta. */
+  private setCharge(v: FighterView, ch: boolean): void {
+    const cl = v.root.classList;
+    const on = cl.contains('charging') && !cl.contains('uncharge');
+    v.charged.textContent = ch ? CHARGED_TEXT : '';
+    v.charged.classList.toggle('on', ch);
+    if (ch === on) return;
+    if (ch) {
+      cl.remove('uncharge');
+      cl.add('charging');
+      const c = center(v.body);
+      converge(c.x, c.y, 10, ['#ffcf3f', '#ffe066'], 54, 350);
+      const cv = v.body.firstElementChild;
+      if (cv && !reduced())
+        play(
+          cv,
+          [
+            { filter: GOLD },
+            { filter: GOLD, offset: 0.25 },
+            { filter: 'none', offset: 0.25 },
+            { filter: 'none', offset: 0.5 },
+            { filter: GOLD, offset: 0.5 },
+            { filter: GOLD, offset: 0.75 },
+            { filter: 'none', offset: 0.75 },
+            { filter: 'none' },
+          ],
+          { delay: 350, duration: 240 },
+          this.fx,
+        );
+    } else {
+      cl.add('uncharge');
+      window.setTimeout(() => {
+        if (cl.contains('uncharge')) cl.remove('charging', 'uncharge');
+      }, 150);
+    }
   }
 
   private view(s: Side): FighterView {
@@ -517,20 +661,68 @@ export class BattleUi {
     this.fx.cancel();
     cancelAnimationFrame(this.raf);
     window.removeEventListener('keydown', this.onKey);
-    const cls = msg.result === 'win' ? 'win' : msg.result === 'lose' ? 'lose' : msg.result === 'over' ? 'over' : '';
+    window.clearInterval(this.embers);
+    this.setTense(false);
+    const rm = reduced();
+    const cls = { win: 'win', lose: 'lose', draw: 'draw', flee: 'flee', over: 'over' }[msg.result];
     const title = { win: 'VITÓRIA!', lose: 'DERROTA', draw: 'EMPATE', flee: 'FUGIU', over: 'FIM' }[msg.result];
     this.actionsEl.remove();
     this.timerEl.remove();
-    const res = h('div', { class: `result ${cls}` }, title);
+    const txt = h('span', { class: 'rtxt' }, title);
+    const res = h('div', { class: `result ${cls}` }, txt);
     this.root.append(res, h('div', { class: 'btext' }, msg.text));
-    if (msg.result === 'win' && !this.spectate) {
-      const r = res.getBoundingClientRect();
-      const wild = this.opp.info.wild;
-      const f = this.opp.info.look.form;
-      confetti(r.left + r.width / 2, r.top, wild ? 12 : 36, wild ? [RAMP[f][1], '#ffffff'] : ['#ff7a3d', '#4aa3ff', '#52c95f', '#ffcf3f', '#ff5fd2'], { spread: 40 });
+    const you = this.you.body;
+    const opp = this.opp.body;
+
+    if (msg.result === 'win') {
+      stampIn(txt, this.fx, { from: 3, ms: 220, rot: [-8, -3] });
+      if (!rm) play(this.root, [{ translate: '0 0' }, { translate: '0 3px' }, { translate: '0 0' }], { delay: 150, duration: 160, easing: 'steps(2)' }, this.fx);
+      if (!this.spectate) {
+        const r = res.getBoundingClientRect();
+        const wild = this.opp.info.wild;
+        const f = this.opp.info.look.form;
+        confetti(r.left + r.width / 2, r.top, wild ? 12 : 36, wild ? [RAMP[f][1], '#ffffff'] : ['#ff7a3d', '#4aa3ff', '#52c95f', '#ffcf3f', '#ff5fd2'], { spread: 40 });
+        const e = attackElem(this.opp.info.look);
+        if (wild && e) {
+          const plus = h('b', { class: 'plus1', style: `color:${ELEM_TONE[e].body}` }, `+1 ${ELEM_ICON[e]}`);
+          res.append(plus);
+          stampIn(plus, this.fx, { from: 2, ms: 180, delay: 200 });
+        }
+      }
+    } else if (msg.result === 'lose') {
+      play(txt, rm ? [{ opacity: 0 }, { opacity: 1 }] : [{ translate: '0 -20px', opacity: 0 }, { translate: '0 0', opacity: 1, offset: 0.55 }, { translate: '0 -5px', offset: 0.75 }, { translate: '0 0' }], { duration: rm ? 150 : 360 }, this.fx);
+      play(this.root, [{ filter: 'saturate(1)' }, { filter: 'saturate(.4)' }], { duration: 400, fill: 'forwards' }, this.fx);
+      play(you, [{ translate: '0 0', filter: 'grayscale(0)' }, { translate: rm ? '0 0' : '0 6px', filter: 'grayscale(1)' }], { duration: 300, easing: 'steps(3)', fill: 'forwards' }, this.fx);
+      // Rachadura branca em zigue-zague cruzando a moldura
+      const crack = h('div', { class: 'pcrack' }, h('i'));
+      this.root.append(crack);
+    } else if (msg.result === 'draw') {
+      play(txt, [{ opacity: 0 }, { opacity: 1 }], { duration: 150 }, this.fx);
+      if (!rm) for (const b of [you, opp]) play(b, [{ translate: '0 0' }, { translate: '0 -8px' }, { translate: '0 0' }, { translate: '0 -4px' }, { translate: '0 0' }], { duration: 420, easing: 'steps(4)' }, this.fx);
+    } else if (msg.result === 'flee') {
+      play(txt, [{ opacity: 0 }, { opacity: 1 }], { duration: 150 }, this.fx);
+      const c = center(opp);
+      burst(c.x, c.y + 24, 8, RAMP.neutro, { angle: [-170, -10], speed: [30, 80], gravity: 120, life: [260, 420] });
+      play(opp, [{ translate: '0 0', opacity: 1 }, { translate: rm ? '0 0' : '40px 0', opacity: 0 }], { duration: 300, easing: 'steps(4)', fill: 'forwards' }, this.fx);
+    } else {
+      play(txt, [{ opacity: 0 }, { opacity: 1 }], { duration: 150 }, this.fx);
+      // Duelo convocado: lampejo magenta (alpha máx. 0,3)
+      const fl = h('div', { class: 'flash', style: 'background:#ff5fd2' });
+      document.body.append(fl);
+      play(fl, [{ opacity: 0.3 }, { opacity: 0 }], { duration: 260, fill: 'forwards' });
+      window.setTimeout(() => fl.remove(), 280);
     }
-    later(1600, () => play(this.root, [{ opacity: 1 }, { opacity: 0, translate: '0 8px' }], { duration: 200, fill: 'forwards' }), this.fx);
+
+    later(
+      1600,
+      () => {
+        play(this.root, [{ opacity: 1, translate: '0 0' }, { opacity: 0, translate: '0 8px' }], { duration: 200, fill: 'forwards' });
+        this.dropFrame(true);
+      },
+      this.fx,
+    );
     window.setTimeout(() => {
+      this.dropFrame(false);
       this.root.remove();
       onClosed();
     }, 1800);
@@ -541,6 +733,7 @@ export class BattleUi {
     this.pending = null;
     cancelAnimationFrame(this.raf);
     window.removeEventListener('keydown', this.onKey);
+    this.dropFrame(false);
     this.root.remove();
   }
 }
