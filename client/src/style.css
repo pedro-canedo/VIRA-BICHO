@@ -15,6 +15,34 @@
   --round: 'Nunito', system-ui, sans-serif;
   --safe-t: env(safe-area-inset-top, 0px);
   --safe-b: env(safe-area-inset-bottom, 0px);
+  /* Rampas de efeito [claro, corpo, escuro]: as mesmas do mundo */
+  --fx-brasa-1: #ffd27a;
+  --fx-brasa-2: #ff7a3d;
+  --fx-brasa-3: #b8400f;
+  --fx-mare-1: #c4e6ff;
+  --fx-mare-2: #4aa3ff;
+  --fx-mare-3: #1b4fc4;
+  --fx-broto-1: #d2f7b8;
+  --fx-broto-2: #52c95f;
+  --fx-broto-3: #17803a;
+  --fx-vapor-1: #ffffff;
+  --fx-vapor-2: #b9a7ff;
+  --fx-vapor-3: #c4e6ff;
+  --fx-cinza-1: #ff7a3d;
+  --fx-cinza-2: #a8845c;
+  --fx-cinza-3: #6d6a80;
+  --fx-mangue-1: #d2f7b8;
+  --fx-mangue-2: #3fb3a0;
+  --fx-mangue-3: #17803a;
+  --fx-quimera-1: #ff7a3d;
+  --fx-quimera-2: #ffcf3f;
+  --fx-quimera-3: #52c95f;
+  --fx-quimera-4: #4aa3ff;
+  --fx-quimera-5: #ff5fd2;
+  --fx-neutro-1: #fffaf0;
+  --fx-neutro-2: #e9e1cc;
+  --fx-neutro-3: #9d9580;
+  --pix-shadow: 2px 2px 0 #140f24;
 }
 
 * {
@@ -66,6 +94,105 @@ input {
 
 .hidden {
   display: none !important;
+}
+
+/* Camada de pixels da interface (ui/fxcanvas.ts) */
+.fxlayer {
+  position: fixed;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  image-rendering: pixelated;
+  z-index: 40;
+}
+
+/* ---------- biblioteca de movimento (sempre em degraus) ---------- */
+
+@keyframes stamp {
+  from {
+    scale: 2;
+    opacity: 0;
+  }
+  to {
+    scale: 1;
+    opacity: 1;
+  }
+}
+
+@keyframes pop3 {
+  50% {
+    scale: 1.3;
+  }
+}
+
+@keyframes crack {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+@keyframes glint {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+@keyframes heartbeat {
+  0%,
+  30% {
+    scale: 1;
+  }
+  15%,
+  45% {
+    scale: 1.15;
+  }
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@keyframes rise-num {
+  from {
+    translate: 0 0;
+    opacity: 1;
+  }
+  to {
+    translate: 0 -30px;
+    opacity: 0;
+  }
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes wobble {
+  0% {
+    rotate: -3deg;
+  }
+  50% {
+    rotate: 3deg;
+  }
+}
+
+@keyframes sparkpop {
+  0% {
+    transform: scale(0);
+  }
+  50% {
+    transform: scale(1.4);
+  }
+  100% {
+    transform: scale(0);
+  }
 }
 
 canvas.creature {
@@ -185,24 +312,100 @@ input.field:focus {
 }
 
 .preview {
+  position: relative;
   display: flex;
   justify-content: center;
-  gap: 6px;
   min-height: 96px;
   align-items: flex-end;
 }
 
-.preview canvas {
+.pets {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  align-items: flex-end;
+}
+
+/* Círculo de runas atrás das prévias: gira em degraus de 90° */
+.menurune {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 144px;
+  height: 144px;
+  margin: -72px 0 0 -72px;
+  image-rendering: pixelated;
+  opacity: 0.55;
+  animation: spin8 16s steps(4) infinite;
+}
+
+/* Letras do título balançando em onda */
+.logo.wave {
+  background: none;
+  color: var(--text);
+  filter: none;
+}
+
+.logo.wave span {
+  display: inline-block;
+  text-shadow: 0 4px 0 #0c0818;
+  animation: wave 1.2s steps(2) infinite;
+}
+
+@keyframes wave {
+  50% {
+    translate: 0 -4px;
+  }
+}
+
+/* Partículas de elemento flutuando no fundo do menu e da sala */
+.motes {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.motes i {
+  position: absolute;
+  bottom: -12px;
+  width: 6px;
+  height: 6px;
+  opacity: 0.5;
+  animation: mote 8s linear infinite;
+}
+
+@keyframes mote {
+  to {
+    translate: 0 -110vh;
+  }
+}
+
+.screen > .stack {
+  position: relative;
+}
+
+.chip.new {
+  animation: pop 0.2s steps(3);
+}
+
+.big-count.hot {
+  color: var(--bad);
+  animation: heartbeat 1s steps(2);
+}
+
+.pets canvas {
   width: 96px;
   height: 96px;
   animation: bob 1.6s ease-in-out infinite;
 }
 
-.preview canvas:nth-child(2) {
+.pets canvas:nth-child(2) {
   animation-delay: 0.3s;
 }
 
-.preview canvas:nth-child(3) {
+.pets canvas:nth-child(3) {
   animation-delay: 0.6s;
 }
 
@@ -285,6 +488,7 @@ input.field:focus {
   top: calc(8px + var(--safe-t));
   left: 50%;
   transform: translateX(-50%);
+  z-index: 1;
   text-align: center;
   pointer-events: none !important;
 }
@@ -305,9 +509,82 @@ input.field:focus {
   margin-top: 4px;
 }
 
+.phase .clock.hot {
+  color: var(--bad);
+}
+
+/* Faixa EVOLUIU! sob a caixa da fase */
+.evoband {
+  margin: 6px auto 0;
+  width: max-content;
+  font-family: var(--pixel);
+  font-size: 11px;
+  color: #140f24;
+  background: var(--fc, var(--good));
+  border: 2px solid #140f24;
+  padding: 4px 8px 3px;
+  text-shadow: 1px 1px 0 #fff;
+  opacity: 0;
+}
+
+/* Vinhetas de perigo: só as bordas, animando só a opacidade */
+.dvig {
+  position: fixed;
+  inset: 0;
+  pointer-events: none !important;
+  opacity: 0;
+  visibility: hidden;
+}
+
+.dvig.on {
+  visibility: visible;
+}
+
+.dvig.zone {
+  background: radial-gradient(transparent 55%, rgba(255, 95, 210, 0.35) 100%);
+}
+
+.dvig.zone.on {
+  animation: zonepulse 1s steps(6) infinite;
+}
+
+@keyframes zonepulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
+
+.dvig.hp {
+  background: radial-gradient(transparent 55%, rgba(255, 79, 109, 0.45) 100%);
+}
+
+.dvig.hp.on {
+  animation: hpbeat 1.1s steps(1) infinite;
+}
+
+@keyframes hpbeat {
+  0% {
+    opacity: 0.9;
+  }
+  8% {
+    opacity: 0.3;
+  }
+  16% {
+    opacity: 0.9;
+  }
+  25%,
+  100% {
+    opacity: 0.3;
+  }
+}
+
 .phase.danger {
   border-color: var(--bad);
-  animation: pulse 1s infinite;
+  animation: pulse 1s steps(1) infinite;
 }
 
 @keyframes pulse {
@@ -317,6 +594,7 @@ input.field:focus {
 }
 
 .me {
+  --fc: var(--line);
   position: fixed;
   top: calc(8px + var(--safe-t));
   left: 8px;
@@ -331,10 +609,53 @@ input.field:focus {
   pointer-events: none !important;
 }
 
+/* Borda do cartão: pisca na evolução (::after) e pulsa devagar na forma final (::before) */
+.me::after,
+.me.final::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border: 2px solid var(--fc);
+  border-radius: 14px;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.me.final::before {
+  opacity: 1;
+  animation: finalpulse 4s steps(1) infinite;
+}
+
+@keyframes finalpulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.portrait {
+  position: relative;
+  border-radius: 8px;
+}
+
+/* Anel de runas no retrato durante a evolução */
+.portrait.evo::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  background: repeating-conic-gradient(var(--ec, #ffcf3f) 0 45deg, transparent 45deg 90deg);
+  -webkit-mask: radial-gradient(closest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+  mask: radial-gradient(closest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+  animation: spin8 0.9s steps(8) infinite;
+}
+
 .me canvas {
   width: 52px;
   height: 52px;
-  grid-row: span 2;
+}
+
+.me .hptext {
+  grid-column: span 2;
 }
 
 .me .name {
@@ -365,14 +686,81 @@ input.field:focus {
 }
 
 .bar > i {
+  position: relative;
   display: block;
+  width: 100%;
   height: 100%;
   background: var(--good);
-  transition: width 0.25s;
+  transform-origin: left;
+}
+
+/* Dano fantasma: segura o valor antigo e desce depois */
+.bar > b.ghost {
+  position: absolute;
+  inset: 0;
+  background: #ffe28a;
+  transform-origin: left;
+  transition: transform 0.45s ease-in 0.35s;
+}
+
+.bar > b.ghost.heal {
+  background: var(--good);
+}
+
+.bar.low > i {
+  background: var(--bad);
+  animation: blink 0.5s steps(1) infinite;
 }
 
 .bar.xp > i {
   background: var(--accent);
+  transition: transform 0.25s;
+}
+
+/* Brilho de 6 px percorrendo a barra de XP a cada 2 s */
+.bar.xp::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent calc(100% - 6px), rgba(255, 255, 255, 0.6) calc(100% - 6px));
+  animation: xpglint 2s steps(24) infinite;
+  pointer-events: none;
+}
+
+@keyframes xpglint {
+  0% {
+    translate: -100% 0;
+  }
+  50%,
+  100% {
+    translate: 6px 0;
+  }
+}
+
+/* Ponta branca que marca onde a barra avançou */
+.bar.xp > u {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 2px;
+  background: #fff;
+  opacity: 0;
+}
+
+/* Orbe de XP 6×6 com núcleo branco */
+.orb {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 6px;
+  height: 6px;
+  background:
+    linear-gradient(#fff, #fff) 2px 2px / 2px 2px no-repeat,
+    var(--oc, #ffcf3f);
+  box-shadow: 0 0 0 1px #140f24;
+  opacity: 0;
+  pointer-events: none !important;
 }
 
 .types {
@@ -401,9 +789,32 @@ input.field:focus {
 }
 
 .status span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   background: var(--panel2);
   border-radius: 6px;
   padding: 1px 6px;
+}
+
+/* Ícones pixel: chama da Fome e hexágono do Escudo */
+.st-hunger::before,
+.st-shield::before {
+  content: '';
+  width: 8px;
+  height: 10px;
+  flex: none;
+}
+
+.st-hunger::before {
+  background: linear-gradient(#ffd27a 0 40%, #ff7a3d 40% 75%, #b8400f 75%);
+  clip-path: polygon(50% 0, 62% 25%, 100% 38%, 100% 88%, 75% 100%, 25% 100%, 0 88%, 0 50%, 25% 38%, 38% 12%);
+  animation: blink 0.4s steps(1) infinite;
+}
+
+.st-shield::before {
+  background: repeating-linear-gradient(#7cc4ff 0 2px, #c4e6ff 2px 4px);
+  clip-path: polygon(50% 0, 100% 20%, 100% 80%, 50% 100%, 0 80%, 0 20%);
 }
 
 .side {
@@ -432,6 +843,21 @@ input.field:focus {
   background: rgba(20, 15, 36, 0.86);
   padding: 6px 8px;
   border-radius: 8px;
+}
+
+.anw {
+  position: relative;
+  display: inline-block;
+}
+
+.anum {
+  display: inline-block;
+}
+
+.aold {
+  position: absolute;
+  left: 0;
+  top: 0;
 }
 
 .board {
@@ -464,6 +890,23 @@ input.field:focus {
   color: var(--accent);
 }
 
+.board > div {
+  position: relative;
+}
+
+/* Brilho pixel na linha da Coroa */
+.board .crown-row::after {
+  content: '';
+  position: absolute;
+  left: 1px;
+  top: 1px;
+  width: 3px;
+  height: 3px;
+  background: #fff;
+  box-shadow: 3px 3px 0 #ffcf3f, -3px 3px 0 #ffcf3f;
+  animation: blink 0.6s steps(1) infinite;
+}
+
 .feed {
   position: fixed;
   left: 8px;
@@ -477,27 +920,18 @@ input.field:focus {
 
 .feed div {
   background: rgba(20, 15, 36, 0.8);
-  border-left: 4px solid var(--muted);
+  border-left: 3px solid var(--fc, var(--muted));
   padding: 5px 8px;
-  border-radius: 6px;
+  border-radius: 0 6px 6px 0;
   font-size: 13px;
-  animation: slidein 0.25s ease-out;
+  animation: slidein 0.24s steps(4);
 }
 
-.feed .steal {
-  border-color: var(--accent);
-}
-
-.feed .elim {
-  border-color: var(--bad);
-}
-
-.feed .phase-msg {
-  border-color: #b98cff;
-}
-
-.feed .evo {
-  border-color: var(--good);
+.feed .ficon {
+  display: inline-block;
+  font-style: normal;
+  margin-right: 6px;
+  animation: pop3 0.25s steps(3) 0.12s backwards;
 }
 
 @keyframes slidein {
@@ -529,7 +963,7 @@ input.field:focus {
   font-size: 14px;
   text-align: center;
   box-shadow: 0 4px 0 rgba(0, 0, 0, 0.35);
-  animation: pop 0.2s ease-out;
+  animation: pop 0.2s steps(3);
 }
 
 @keyframes pop {
@@ -554,35 +988,261 @@ input.field:focus {
 /* ---------- batalha ---------- */
 
 .battle {
+  --c1: var(--accent);
+  --c2: var(--accent);
+  --b1: var(--accent);
+  --b2: var(--accent);
   position: fixed;
   left: 50%;
   bottom: calc(10px + var(--safe-b));
   transform: translateX(-50%);
   width: min(520px, calc(100vw - 16px));
-  background: rgba(24, 18, 44, 0.96);
-  border: 3px solid var(--accent);
+  /* Borda em gradiente entre as cores dos dois bichos (camadas padding-box/border-box) */
+  background:
+    linear-gradient(#18122c, #18122c) padding-box,
+    linear-gradient(90deg, var(--c1), var(--c2)) border-box;
+  border: 3px solid transparent;
   border-radius: 20px;
   padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 10px;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
-  animation: rise 0.25s ease-out;
+  animation: enter 0.26s steps(5) backwards;
 }
 
-@keyframes rise {
+/* Entrada: sobe 30 px com escala 0,9→1,02→1 */
+@keyframes enter {
   from {
-    transform: translate(-50%, 30px);
+    translate: 0 30px;
+    scale: 0.9;
+    opacity: 0;
+  }
+  70% {
+    translate: 0 -2px;
+    scale: 1.02;
+    opacity: 1;
+  }
+}
+
+/* Brilho que percorre a borda (só o anel da borda, via máscara) */
+.battle::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  padding: 3px;
+  border-radius: 20px;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent 0 40%, rgba(255, 255, 255, 0.8) 40% 44%, transparent 44%) 0 0 / 300% 100%;
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: bordersweep 3s steps(24) infinite;
+}
+
+@keyframes bordersweep {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+
+/* Coração da contagem tensa: 2 batidas por segundo (0 e 180 ms) */
+.battle::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border: 3px solid var(--bad);
+  border-radius: 20px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.battle.tense::before {
+  animation: beat2 1s steps(1) infinite;
+}
+
+@keyframes beat2 {
+  0% {
+    opacity: 1;
+  }
+  9% {
+    opacity: 0;
+  }
+  18% {
+    opacity: 1;
+  }
+  27%,
+  100% {
     opacity: 0;
   }
 }
 
+.battle.tense .actions:not(.picked) .act {
+  animation: btnbeat 1s steps(1) infinite;
+}
+
+@keyframes btnbeat {
+  0%,
+  18% {
+    scale: 1.04;
+  }
+  9%,
+  27%,
+  100% {
+    scale: 1;
+  }
+}
+
+/* Duelo Final: borda dupla magenta e dourada */
 .battle.final {
-  border-color: #ff5fd2;
-  box-shadow: 0 0 0 3px rgba(255, 95, 210, 0.25), 0 10px 40px rgba(0, 0, 0, 0.6);
+  --c1: #ff5fd2;
+  --c2: #ff5fd2;
+  box-shadow:
+    0 0 0 2px #140f24,
+    0 0 0 5px #ffcf3f,
+    0 10px 40px rgba(0, 0, 0, 0.6);
+}
+
+.fband {
+  position: absolute;
+  left: 50%;
+  top: -13px;
+  translate: -50% 0;
+  font-family: var(--pixel);
+  font-size: 10px;
+  color: #140f24;
+  background: #ff5fd2;
+  border: 2px solid #140f24;
+  padding: 4px 8px 3px;
+  white-space: nowrap;
+  rotate: -3deg;
+  z-index: 2;
+}
+
+/* Tarjas de cinema */
+.cine {
+  position: fixed;
+  left: 0;
+  right: 0;
+  height: 7vh;
+  background: #0b0716;
+  pointer-events: none !important;
+}
+
+.cine.top {
+  top: 0;
+}
+
+.cine.bot {
+  bottom: 0;
+}
+
+.vsmid {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Raio pixel do VS nas cores dos dois elementos */
+.vsbolt {
+  width: 18px;
+  height: 30px;
+  background: linear-gradient(var(--b1) 0 50%, var(--b2) 50%);
+  clip-path: polygon(9px 0, 18px 0, 12px 12px, 18px 12px, 3px 30px, 6px 15px, 0 15px);
+}
+
+/* Dígito da contagem tensa */
+.cdigit {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 3;
+  font-family: var(--pixel);
+  font-size: 28px;
+  font-weight: 400;
+  color: #ffcf3f;
+  text-shadow: 3px 3px 0 #140f24;
+  pointer-events: none;
+}
+
+.cdigit.crit {
+  color: var(--bad);
+}
+
+.actions.hesitou .act {
+  background: #3a3450;
+  color: var(--muted);
+}
+
+/* Aura de Carga: anel de faíscas girando e contorno pixel piscando */
+.fighter .fbody {
+  position: relative;
+}
+
+.fighter.charging .fbody::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  pointer-events: none;
+  background: repeating-conic-gradient(#ffe066 0 45deg, transparent 45deg 90deg);
+  -webkit-mask: radial-gradient(closest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+  mask: radial-gradient(closest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+  animation: spin8 0.8s steps(8) infinite;
+}
+
+.fighter.charging .fbody canvas {
+  animation: chline 0.333s steps(1) infinite;
+}
+
+.fighter.uncharge .fbody::after {
+  animation: fadeout 0.15s steps(3) forwards;
+}
+
+.fighter.uncharge .fbody canvas {
+  animation: none;
+}
+
+@keyframes spin8 {
+  to {
+    rotate: 360deg;
+  }
+}
+
+@keyframes chline {
+  0% {
+    filter: drop-shadow(2px 0 0 #ffcf3f) drop-shadow(-2px 0 0 #ffcf3f) drop-shadow(0 2px 0 #ffcf3f) drop-shadow(0 -2px 0 #ffcf3f);
+  }
+  50% {
+    filter: none;
+  }
+}
+
+@keyframes fadeout {
+  to {
+    opacity: 0;
+  }
+}
+
+.charged.on {
+  animation: jit 0.1s steps(1) infinite;
+}
+
+@keyframes jit {
+  50% {
+    translate: 1px 0;
+  }
 }
 
 .duel {
+  position: relative;
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
@@ -590,6 +1250,7 @@ input.field:focus {
 }
 
 .fighter {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -597,7 +1258,8 @@ input.field:focus {
   min-width: 0;
 }
 
-.fighter canvas {
+.fighter canvas,
+.fbody {
   width: 84px;
   height: 84px;
 }
@@ -630,17 +1292,117 @@ input.field:focus {
   font-family: var(--pixel);
 }
 
-.fighter.hit canvas {
-  animation: shake 0.35s;
+/* Número de dano e selos de eficácia */
+.dmgnum {
+  position: absolute;
+  left: 50%;
+  top: 22px;
+  z-index: 4;
+  transform: translate(-50%, 0);
+  font-family: var(--pixel);
+  font-size: 16px;
+  color: #fff;
+  text-shadow: 3px 3px 0 #140f24;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
-@keyframes shake {
-  25% {
-    translate: -5px 0;
-  }
-  75% {
-    translate: 5px 0;
-  }
+.dmgnum.big {
+  font-size: 24px;
+  top: 6px;
+}
+
+.dmgnum.weak {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.dmgnum.fury {
+  color: var(--bad);
+}
+
+.dmgnum.ch {
+  color: #ffe066;
+}
+
+.dmgnum.ch::before {
+  content: '';
+  position: absolute;
+  inset: -12px -8px;
+  z-index: -1;
+  background: repeating-conic-gradient(from 15deg, rgba(255, 224, 102, 0.55) 0 8deg, transparent 8deg 60deg);
+}
+
+/* A pilha de selos termina na base do sprite (84 px), acima do nome, e cresce para cima */
+.seals {
+  position: absolute;
+  left: 50%;
+  top: 80px;
+  translate: 0 -100%;
+  z-index: 3;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  pointer-events: none;
+}
+
+/* os selos crescem para dentro do painel, sem sair da tela */
+.fighter.you .seals {
+  left: 0;
+  transform: none;
+  align-items: flex-start;
+}
+
+.fighter.opp .seals {
+  left: auto;
+  right: 0;
+  transform: none;
+  align-items: flex-end;
+}
+
+.seal {
+  font-family: var(--pixel);
+  font-size: 10px;
+  font-weight: 400;
+  padding: 3px 5px;
+  border: 2px solid #140f24;
+  color: #140f24;
+  white-space: nowrap;
+  transform: rotate(-4deg);
+}
+
+.seal.weak {
+  background: #2d2450;
+  color: var(--muted);
+  border-color: #140f24;
+  transform: none;
+  opacity: 0.7;
+}
+
+.seal.ch {
+  background: #ffe066;
+}
+
+/* Escudo pixel na frente do lutador */
+.pshield {
+  position: absolute;
+  top: 14px;
+  width: 10px;
+  height: 56px;
+  z-index: 2;
+  background: repeating-linear-gradient(#7cc4ff 0 4px, #c4e6ff 4px 6px);
+  clip-path: polygon(50% 0, 100% 16%, 100% 84%, 50% 100%, 0 84%, 0 16%);
+  animation: glint 0.12s steps(1) infinite;
+}
+
+.pshield.you {
+  left: calc(50% + 44px);
+}
+
+.pshield.opp {
+  right: calc(50% + 44px);
 }
 
 .charged {
@@ -660,19 +1422,203 @@ input.field:focus {
 .reveal {
   display: flex;
   justify-content: center;
-  gap: 16px;
-  font-size: 32px;
-  min-height: 40px;
+  align-items: center;
+  gap: 14px;
+  min-height: 58px;
 }
 
-.reveal span {
-  animation: flip 0.35s ease-out;
+.reveal.named {
+  min-height: 72px;
 }
 
-@keyframes flip {
-  from {
-    transform: rotateY(90deg) scale(0.6);
-  }
+/* Cartas da revelação: verso, frente e o flip em 3D */
+.cslot {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  perspective: 300px;
+}
+
+.cname {
+  font-size: 10px;
+  color: var(--muted);
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pcard {
+  position: relative;
+  width: 40px;
+  height: 54px;
+}
+
+.pin {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+}
+
+.face {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 3px solid;
+  border-radius: 4px;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.face.back {
+  background: repeating-linear-gradient(45deg, #2d2450 0 4px, #362b60 4px 8px);
+  border-color: var(--line);
+}
+
+.face.back .q {
+  font-family: var(--pixel);
+  font-style: normal;
+  font-size: 14px;
+  color: var(--muted);
+  text-shadow: var(--pix-shadow);
+}
+
+.pcard.wobble {
+  animation: wobble 1.2s steps(1) infinite;
+}
+
+.pcard.wobble .q {
+  animation: blink 0.6s steps(1) infinite;
+}
+
+.face.front {
+  transform: rotateY(180deg);
+  font-size: 22px;
+  background: var(--panel2);
+  border-color: var(--line);
+}
+
+.face.front.ataque {
+  background: #7a2433;
+  border-color: #ff4f6d;
+}
+
+.face.front.defesa {
+  background: #24507a;
+  border-color: #7cc4ff;
+}
+
+.face.front.carga {
+  background: #6a5a12;
+  border-color: #ffcf3f;
+}
+
+.pcard.empty {
+  outline: 2px dashed var(--line);
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+
+.pcard.empty .pin {
+  visibility: hidden;
+}
+
+/* reduced-motion: sem 3D, o flip vira crossfade */
+.pcard.rm .front {
+  transform: none;
+  opacity: 0;
+}
+
+.pcard.won .face.front {
+  outline: 3px solid #ffcf3f;
+}
+
+.pcard.won::after {
+  content: '';
+  position: absolute;
+  inset: -14px -10px;
+  z-index: -1;
+  background:
+    linear-gradient(#ffcf3f, #ffcf3f) 50% 0 / 3px 8px no-repeat,
+    linear-gradient(#ffcf3f, #ffcf3f) 50% 100% / 3px 8px no-repeat,
+    linear-gradient(#ffcf3f, #ffcf3f) 0 50% / 8px 3px no-repeat,
+    linear-gradient(#ffcf3f, #ffcf3f) 100% 50% / 8px 3px no-repeat;
+  animation: glint 0.3s steps(1) infinite;
+}
+
+.pcard.lost {
+  filter: grayscale(1) brightness(0.7);
+}
+
+.pcard.lost::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top right, transparent calc(50% - 1px), #140f24 calc(50% - 1px) calc(50% + 1px), transparent calc(50% + 1px));
+  animation: crack 0.12s steps(3);
+}
+
+.pcard.glowc .face.front {
+  outline: 3px solid #ffcf3f;
+  filter: drop-shadow(2px 0 0 #ffe066) drop-shadow(-2px 0 0 #ffe066);
+}
+
+.rmid {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.rmid > * {
+  position: absolute;
+}
+
+.spark {
+  width: 40px;
+  height: 40px;
+  background: repeating-conic-gradient(#ffcf3f 0 10deg, transparent 10deg 45deg);
+  clip-path: circle(50%);
+  transform: scale(0);
+  animation: sparkpop 0.3s steps(4) forwards;
+}
+
+.eq {
+  font-family: var(--pixel);
+  font-size: 18px;
+  color: var(--muted);
+  text-shadow: var(--pix-shadow);
+  animation: blink 0.25s steps(1) 4;
+}
+
+.midshield {
+  width: 22px;
+  height: 28px;
+  background: repeating-linear-gradient(#7cc4ff 0 4px, #c4e6ff 4px 6px);
+  clip-path: polygon(50% 0, 100% 16%, 100% 84%, 50% 100%, 0 84%, 0 16%);
+  animation: heartbeat 0.6s steps(2) 2;
+}
+
+.ready {
+  position: absolute;
+  left: 50%;
+  top: 27px;
+  z-index: 2;
+  transform: translate(-50%, -50%) rotate(-8deg);
+  font-family: var(--pixel);
+  font-size: 8px;
+  font-weight: 400;
+  color: var(--good);
+  background: #140f24;
+  border: 2px solid var(--good);
+  padding: 3px 3px 2px;
+  animation: stamp 0.18s steps(3);
 }
 
 .btext {
@@ -693,6 +1639,31 @@ input.field:focus {
   height: 100%;
   background: var(--accent);
   width: 100%;
+  transform-origin: left;
+}
+
+.timer.t-warn > i {
+  background: #ff7a3d;
+}
+
+.timer.t-crit > i {
+  background: var(--bad);
+}
+
+/* Último segundo sem escolha: a barra engrossa e pisca */
+.battle.tense .timer.t-crit {
+  height: 8px;
+  margin: -1px 0;
+}
+
+.battle.tense .timer.t-crit > i {
+  animation: blink4 0.25s steps(1) infinite;
+}
+
+@keyframes blink4 {
+  50% {
+    opacity: 0.4;
+  }
 }
 
 .actions {
@@ -737,19 +1708,134 @@ input.field:focus {
   outline: 3px solid var(--accent);
 }
 
+.act.chosen:disabled {
+  opacity: 1;
+}
+
+/* Afunda na hora do toque */
+.act.press {
+  translate: 0 3px;
+  scale: 0.92;
+}
+
+.actions.picked .act:not(.chosen) {
+  opacity: 0.35;
+  scale: 0.95;
+  transition:
+    opacity 0.15s,
+    scale 0.15s;
+}
+
 .result {
+  position: relative;
+  isolation: isolate;
   font-family: var(--pixel);
   text-align: center;
   font-size: 16px;
   padding: 6px;
+  text-shadow: 3px 3px 0 #140f24;
+}
+
+.rtxt {
+  display: inline-block;
 }
 
 .result.win {
+  font-size: 22px;
   color: var(--good);
+}
+
+/* Raios dourados girando atrás da VITÓRIA */
+.result.win::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 180px;
+  height: 180px;
+  margin: -90px 0 0 -90px;
+  z-index: -1;
+  border-radius: 50%;
+  background: repeating-conic-gradient(rgba(255, 207, 63, 0.2) 0 12deg, transparent 12deg 30deg);
+  animation: spin8 9s steps(72) infinite;
+  pointer-events: none;
 }
 
 .result.lose {
   color: var(--bad);
+}
+
+.result.draw {
+  color: var(--muted);
+}
+
+.result.over {
+  color: #ff5fd2;
+}
+
+.plus1 {
+  display: inline-block;
+  margin-left: 10px;
+  font-size: 14px;
+}
+
+/* Rachadura branca em zigue-zague cruzando a moldura, no vão de 10 px abaixo de .duel (15 px = padding + borda) */
+.pcrack {
+  position: absolute;
+  left: -15px;
+  right: -15px;
+  top: 100%;
+  height: 10px;
+  pointer-events: none;
+  z-index: 4;
+  animation: crack 0.25s steps(5);
+}
+
+.pcrack i {
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  clip-path: polygon(0 3px, 8% 7px, 18% 0, 30% 7px, 42% 1px, 55% 7px, 67% 0, 79% 7px, 90% 1px, 100% 5px, 100% 8px, 90% 4px, 79% 10px, 67% 3px, 55% 10px, 42% 4px, 30% 10px, 18% 3px, 8% 10px, 0 6px);
+}
+
+/* Lampejo de tela cheia (alpha máx. 0,35) */
+.flash {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  pointer-events: none;
+  opacity: 0;
+}
+
+/* ---------- opções do menu ---------- */
+
+.opts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.seg {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+}
+
+.seg .btn,
+.opts .btn {
+  padding: 8px 10px;
+  font-size: 13px;
+  border-radius: 10px;
+}
+
+.seg .btn {
+  flex: 1;
+}
+
+.seg .btn.on {
+  background: var(--accent);
+  color: #2a1d00;
 }
 
 /* ---------- fim ---------- */
@@ -809,6 +1895,56 @@ input.field:focus {
   transform: translate(-50%, -50%);
   width: min(380px, calc(100vw - 24px));
   text-align: center;
+}
+
+.place.bad {
+  font-family: var(--pixel);
+  font-size: 34px;
+  color: var(--bad);
+  text-shadow: 3px 3px 0 #140f24;
+}
+
+.dead.zona .why {
+  color: #ff5fd2;
+}
+
+.place.won,
+.screen .place {
+  text-shadow: 3px 3px 0 #140f24;
+}
+
+/* Anel de runas atrás do bicho vencedor */
+.runewrap {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+
+.runewrap > * {
+  grid-area: 1 / 1;
+}
+
+.endrune {
+  width: 96px;
+  height: 96px;
+  image-rendering: pixelated;
+  animation: spin8 8s steps(4) infinite;
+}
+
+.hero {
+  display: flex;
+  justify-content: center;
+}
+
+.hero .endrune {
+  width: 144px;
+  height: 144px;
+}
+
+.hero canvas.creature {
+  width: 96px;
+  height: 96px;
 }
 
 /* ---------- modais ---------- */
@@ -913,8 +2049,198 @@ input.field:focus {
   .toasts {
     top: 36%;
   }
-  .fighter canvas {
+  .fighter canvas,
+  .fbody {
     width: 72px;
     height: 72px;
+  }
+  .pshield.you {
+    left: calc(50% + 38px);
+  }
+  .pshield.opp {
+    right: calc(50% + 38px);
+  }
+  .seal {
+    font-size: 8px;
+  }
+  .seals {
+    top: 68px;
+  }
+  /* '-30 ×2' do lado direito não passa da borda da tela */
+  .dmgnum.big {
+    font-size: 20px;
+  }
+}
+
+/* ---------- movimento reduzido ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .pets canvas,
+  .menurune,
+  .endrune,
+  .logo.wave span,
+  .chip.new,
+  .big-count.hot,
+  .battle::after,
+  .battle.tense::before,
+  .battle.tense .actions:not(.picked) .act,
+  .battle.tense .timer.t-crit > i,
+  .fighter.charging .fbody::after,
+  .charged.on,
+  .result.win::before,
+  .pcrack,
+  .pband::before,
+  .me.final::before,
+  .portrait.evo::before,
+  .bar.xp::after,
+  .st-hunger::before,
+  .board .crown-row::after,
+  .feed .ficon,
+  .phase.danger,
+  .pcard.wobble,
+  .pcard.wobble .q,
+  .pcard.won::after,
+  .pcard.lost::after,
+  .eq,
+  .midshield,
+  .pshield,
+  .bar.low > i {
+    animation: none;
+  }
+  .battle {
+    animation: fade 0.15s;
+  }
+  .feed div,
+  .toast,
+  .ready,
+  .result {
+    animation: fade 0.15s;
+  }
+  .spark {
+    transform: none;
+    animation: fade 0.3s reverse forwards;
+  }
+  .act.press,
+  .actions.picked .act:not(.chosen) {
+    translate: none;
+    scale: none;
+  }
+  .btn:active {
+    transform: none;
+  }
+  .motes {
+    display: none;
+  }
+  .bar.xp::after {
+    display: none;
+  }
+  .fighter.charging .fbody canvas {
+    animation: none;
+    filter: drop-shadow(2px 0 0 #ffcf3f) drop-shadow(-2px 0 0 #ffcf3f) drop-shadow(0 2px 0 #ffcf3f) drop-shadow(0 -2px 0 #ffcf3f);
+  }
+  .dvig.on {
+    animation: none !important;
+    opacity: 0.5;
+  }
+  .battle.tense .timer.t-crit {
+    height: 6px;
+    margin: 0;
+  }
+}
+
+/* ---------- virada de fase (ui/phase.ts) ---------- */
+
+.phasefx {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none !important;
+  overflow: hidden;
+}
+
+.phasefx > * {
+  grid-area: 1 / 1;
+}
+
+.pvig {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  background: radial-gradient(transparent 55%, var(--pc) 100%);
+}
+
+.prune {
+  width: 384px;
+  height: 384px;
+  image-rendering: pixelated;
+  opacity: 0;
+}
+
+.pband {
+  width: 100%;
+  height: 64px;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  background: var(--pc);
+  border-top: 3px solid #140f24;
+  border-bottom: 3px solid #140f24;
+  transform: skewY(-4deg);
+}
+
+/* Listras diagonais correndo no fundo */
+.pband::before {
+  content: '';
+  position: absolute;
+  inset: 0 -40px 0 -40px;
+  background: repeating-linear-gradient(45deg, rgba(20, 15, 36, 0.14) 0 10px, transparent 10px 20px);
+  animation: stripes 0.5s steps(4) infinite;
+}
+
+@keyframes stripes {
+  to {
+    translate: 28px 0;
+  }
+}
+
+.ptitle,
+.psub {
+  position: relative;
+  white-space: nowrap;
+}
+
+.ptitle {
+  font-family: var(--pixel);
+  font-size: 20px;
+  color: var(--pt);
+  text-shadow: 3px 3px 0 #fff;
+}
+
+.pband.dark .ptitle {
+  text-shadow: 3px 3px 0 #140f24;
+}
+
+.ptitle span {
+  display: inline-block;
+}
+
+.psub {
+  font-size: 12px;
+  font-weight: 900;
+  color: var(--pt);
+}
+
+@media (max-width: 640px) {
+  .prune {
+    width: 256px;
+    height: 256px;
+  }
+  .ptitle {
+    font-size: 16px;
   }
 }

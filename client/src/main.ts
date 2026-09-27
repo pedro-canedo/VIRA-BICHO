@@ -64,6 +64,7 @@ function cleanupGame(): void {
   hud?.destroy();
   hud = null;
   deadEl = null;
+  scene.setBattleInset(0);
   scene.clearWorld();
 }
 
@@ -116,6 +117,8 @@ function onMsg(msg: ServerMsg): void {
         deadEl = null;
       }
       battle = new BattleUi(msg, (a) => net.send({ t: 'act', a }));
+      // O mundo centraliza a luta na área visível acima do painel.
+      requestAnimationFrame(() => scene.setBattleInset(document.querySelector('.battle')?.getBoundingClientRect().height ?? 0));
       return;
     case 'b_turn':
       if (battle?.id === msg.id) battle.startTurn(msg.turn, msg.ms);
@@ -127,7 +130,10 @@ function onMsg(msg: ServerMsg): void {
       const b = battle;
       if (b?.id !== msg.id) return;
       b.end(msg, () => {
-        if (battle === b) battle = null;
+        if (battle === b) {
+          battle = null;
+          scene.setBattleInset(0);
+        }
       });
       return;
     }
@@ -140,6 +146,7 @@ function onMsg(msg: ServerMsg): void {
     case 'elim':
       battle?.destroy();
       battle = null;
+      scene.setBattleInset(0);
       deadEl?.remove();
       deadEl = showEliminated(msg.by, msg.place, msg.reason, () => toMenu());
       return;
@@ -162,5 +169,10 @@ function onMsg(msg: ServerMsg): void {
   }
 }
 
-setScreen('menu');
-showMenu(play);
+// ?fxdemo: demonstração dos efeitos, sem servidor (só desenvolvimento).
+const demo = new URLSearchParams(location.search).get('fxdemo');
+if (demo !== null) void import('./fxdemo').then((m) => m.runFxDemo({ onMsg, scene, name: demo }));
+else {
+  setScreen('menu');
+  showMenu(play);
+}
