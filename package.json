@@ -7,17 +7,21 @@
   "workspaces": [
     "shared",
     "server",
-    "client"
+    "client",
+    "observer"
   ],
   "scripts": {
     "dev": "node scripts/dev.mjs",
-    "build": "npm run build:client && npm run build:server",
+    "dev:obs": "tsx scripts/obs-dev.ts",
+    "build": "npm run build:client && npm run build:server && npm run build:obs",
     "build:client": "vite build --config client/vite.config.ts",
     "build:server": "node scripts/build-server.mjs",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build:obs": "node scripts/build-obs.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p observer/tsconfig.public.json",
     "test": "vitest run",
     "sim": "tsx scripts/sim.ts",
     "start": "node dist/server.mjs",
+    "start:obs": "node dist/obs.mjs",
     "deploy": "bash scripts/deploy.sh"
   },
   "engines": {

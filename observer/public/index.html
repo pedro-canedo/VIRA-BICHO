@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>VIRA-BICHO · Observatório</title>
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/static/app.css" />
+    <script type="module" src="/static/app.js"></script>
+  </head>
+  <body>
+    <header class="top">
+      <div class="brand">
+        <span class="logo" aria-hidden="true"></span>
+        <div>
+          <h1>VIRA-BICHO</h1>
+          <p class="sub">observatório</p>
+        </div>
+      </div>
+      <div class="top-right">
+        <span id="live" class="live" title="Atualização ao vivo">conectando…</span>
+        <form method="post" action="/logout" class="logout">
+          <button type="submit">sair</button>
+        </form>
+      </div>
+    </header>
+
+    <main>
+      <section class="status-strip" aria-label="Status">
+        <div class="status" id="st-game">
+          <span class="dot"></span>
+          <div>
+            <p class="label">Jogo</p>
+            <p class="value" id="st-game-v">—</p>
+            <p class="hint" id="st-game-h"></p>
+          </div>
+        </div>
+        <div class="status" id="st-public">
+          <span class="dot"></span>
+          <div>
+            <p class="label">Túnel público</p>
+            <p class="value" id="st-public-v">—</p>
+            <p class="hint" id="st-public-h"></p>
+          </div>
+        </div>
+        <div class="status services">
+          <div>
+            <p class="label">Serviços runit</p>
+            <div id="st-services" class="chips"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="cards" aria-label="Jogadores agora">
+        <div class="card big accent"><p class="label">Online agora</p><p class="num" id="c-online">—</p></div>
+        <div class="card big"><p class="label">Jogando</p><p class="num" id="c-playing">—</p></div>
+        <div class="card big"><p class="label">Na sala</p><p class="num" id="c-lobby">—</p></div>
+        <div class="card big"><p class="label">Assistindo</p><p class="num" id="c-spectating">—</p></div>
+        <div class="card big"><p class="label">Salas ativas</p><p class="num" id="c-rooms">—</p><p class="card-hint">com humanos</p></div>
+      </section>
+
+      <section class="panel chart-panel">
+        <div class="panel-head">
+          <h2>Jogadores online</h2>
+          <div class="legend">
+            <span class="key k-online">online</span>
+            <span class="key k-playing">jogando</span>
+            <span class="key k-down">fora do ar</span>
+          </div>
+          <div class="tabs" role="tablist" id="range-tabs">
+            <button type="button" data-range="1h" class="on">1h</button>
+            <button type="button" data-range="6h">6h</button>
+            <button type="button" data-range="24h">24h</button>
+          </div>
+        </div>
+        <div class="chart-wrap">
+          <canvas id="chart-online" height="220"></canvas>
+          <div class="tip" id="chart-tip" hidden></div>
+        </div>
+      </section>
+
+      <div class="grid">
+        <section class="panel wide">
+          <div class="panel-head">
+            <h2>Salas ao vivo</h2>
+            <span class="muted" id="rooms-count"></span>
+          </div>
+          <div class="table-wrap">
+            <table class="rooms">
+              <thead>
+                <tr>
+                  <th>Sala</th>
+                  <th>Tipo</th>
+                  <th>Fase</th>
+                  <th class="r">Tempo</th>
+                  <th class="r" title="Humanos"><span class="lg">Humanos</span><span class="sm">Hum</span></th>
+                  <th class="r">Bots</th>
+                  <th class="r">Vivos</th>
+                </tr>
+              </thead>
+              <tbody id="rooms-body"></tbody>
+            </table>
+            <p class="empty" id="rooms-empty">Nenhuma sala aberta.</p>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head"><h2>Partidas de hoje</h2><span class="muted" id="today-day"></span></div>
+          <div class="kv4">
+            <div><p class="label">Partidas</p><p class="mid" id="t-matches">—</p></div>
+            <div><p class="label">Duração média</p><p class="mid" id="t-avg">—</p></div>
+            <div><p class="label">Pico online</p><p class="mid" id="t-peak">—</p></div>
+            <div><p class="label">Entradas</p><p class="mid" id="t-joins">—</p></div>
+          </div>
+          <p class="label sub-h">Vencedores por forma</p>
+          <div id="t-forms" class="bars"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head"><h2>Países e dispositivos</h2></div>
+          <div id="devices" class="split"></div>
+          <div id="countries" class="bars"></div>
+        </section>
+
+        <section class="panel wide feed-panel">
+          <div class="panel-head">
+            <h2>Eventos</h2>
+            <div class="chips filters" id="feed-filters"></div>
+          </div>
+          <ol class="feed" id="feed"></ol>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head"><h2>Processo do jogo</h2><span class="muted" id="g-version"></span></div>
+          <div class="metrics" id="game-metrics"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head"><h2>Celular</h2><span class="muted" id="p-uptime"></span></div>
+          <div class="metrics" id="phone-metrics"></div>
+        </section>
+
+        <section class="panel wide">
+          <div class="panel-head"><h2>Segurança</h2><span class="muted">contadores desde o início do processo do jogo</span></div>
+          <div class="kv4" id="sec-counters"></div>
+          <div class="table-wrap">
+            <table class="sec">
+              <thead>
+                <tr><th>Hora</th><th>Tipo</th><th><span class="lg">IP (hash)</span><span class="sm">IP</span></th><th>Detalhe</th></tr>
+              </thead>
+              <tbody id="sec-body"></tbody>
+            </table>
+            <p class="empty" id="sec-empty">Nenhum evento de segurança recente.</p>
+          </div>
+        </section>
+      </div>
+    </main>
+    <footer class="foot">
+      <span id="foot"></span>
+      <form method="post" action="/logout" class="logout-all">
+        <input type="hidden" name="all" value="1" />
+        <button type="submit" title="Invalida todas as sessões abertas, inclusive cookies copiados">sair de todos os aparelhos</button>
+      </form>
+    </footer>
+  </body>
+</html>
