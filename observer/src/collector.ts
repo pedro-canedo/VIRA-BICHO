@@ -115,6 +115,8 @@ export interface CollectorState {
   stats: ObsStats | null;
   statsAt: number | null;
   restarts: number;
+  /** Falhas seguidas (para a histerese de "fora do ar"). */
+  failStreak: number;
 }
 
 type AddEvent = (e: Omit<StoredEvent, 'id'>) => StoredEvent;
@@ -126,6 +128,11 @@ export interface CollectorOptions {
   addEvent: AddEvent;
   now?: () => number;
   cursor?: CollectorCursor | null;
+  /**
+   * Falhas seguidas para passar de "no ar" a "fora do ar" (padrão 2: um timeout isolado não gera
+   * queda). Conexão recusada derruba na hora: o processo não está escutando.
+   */
+  downAfter?: number;
 }
 
 export class GameCollector {
@@ -148,6 +155,7 @@ export class GameCollector {
       stats: null,
       statsAt: null,
       restarts: 0,
+      failStreak: 0,
     };
   }
 
@@ -157,12 +165,13 @@ export class GameCollector {
     return s.status === 'up' && s.stats && s.statsAt !== null && this.now() - s.statsAt <= maxAgeMs ? s.stats : null;
   }
 
-  private setStatus(status: GameStatus, reason: string | null): void {
+  /** `at`: quando a mudança de fato aconteceu (por padrão, agora). */
+  private setStatus(status: GameStatus, reason: string | null, at = this.now()): void {
     const s = this.state;
-    const t = this.now();
     if (s.status === status) return;
     const prev = s.status;
     const prevSince = s.since;
+    const t = Math.max(prevSince, Math.min(at, this.now()));
     s.status = status;
     s.since = t;
     if (status === 'down') {
@@ -192,12 +201,12 @@ export class GameCollector {
         });
       } catch (err) {
         const code = err instanceof HttpGetError ? err.code : 'EIO';
-        this.fail(code === 'ECONNREFUSED' ? 'conexão recusada' : code === 'ETIMEDOUT' ? 'timeout' : (err as Error).message);
+        this.fail(code === 'ECONNREFUSED' ? 'conexão recusada' : code === 'ETIMEDOUT' ? 'timeout' : (err as Error).message, code === 'ECONNREFUSED');
         return added;
       }
       this.state.lastPollMs = Math.round(res.ms);
       if (res.status === 401 || res.status === 403) {
-        this.fail(`HTTP ${res.status}: OBS_INTERNAL_TOKEN recusado`);
+        this.fail(`HTTP ${res.status}: OBS_INTERNAL_TOKEN recusado`, true);
         return added;
       }
       if (res.status !== 200) {
@@ -219,8 +228,11 @@ export class GameCollector {
         (this.cursor.startedAt !== null && stats.startedAt !== this.cursor.startedAt) || stats.nextSeq < this.cursor.nextSeq;
       if (restarted) {
         this.state.restarts++;
+        // O reinício aconteceu em startedAt (não quando foi percebido): assim o feed fica em ordem
+        // cronológica com os eventos do processo novo, que têm t >= startedAt.
+        const at = Math.min(t, Math.max(stats.startedAt, this.state.since));
         add({
-          t,
+          t: at,
           type: 'restart',
           data: {
             previousStartedAt: this.cursor.startedAt,
@@ -230,7 +242,7 @@ export class GameCollector {
         });
         this.cursor = { startedAt: stats.startedAt, nextSeq: 0 };
         // Os eventos desta resposta foram pedidos com o since antigo: busca de novo do zero já na próxima.
-        this.markUp(stats, t);
+        this.markUp(stats, t, at);
         return added;
       }
       this.cursor.startedAt = stats.startedAt;
@@ -247,16 +259,21 @@ export class GameCollector {
     }
   }
 
-  private markUp(stats: ObsStats, t: number): void {
-    this.setStatus('up', null);
+  private markUp(stats: ObsStats, t: number, upAt = t): void {
+    this.setStatus('up', null, upAt);
     this.state.stats = { ...stats, events: [] };
     this.state.statsAt = t;
     this.state.lastOkAt = t;
     this.state.lastError = null;
+    this.state.failStreak = 0;
   }
 
-  private fail(reason: string): void {
-    this.state.lastError = reason;
+  /** `now`: derruba sem esperar a segunda falha (processo não escuta, token recusado). */
+  private fail(reason: string, immediate = false): void {
+    const s = this.state;
+    s.lastError = reason;
+    s.failStreak++;
+    if (s.status === 'up' && !immediate && s.failStreak < (this.opts.downAfter ?? 2)) return;
     this.setStatus('down', reason);
   }
 }

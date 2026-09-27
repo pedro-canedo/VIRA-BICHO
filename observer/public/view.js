@@ -71,6 +71,16 @@ export function flag(code) {
   return String.fromCodePoint(...[...code].map((c) => 0x1f1e6 + c.charCodeAt(0) - 65));
 }
 
+/**
+ * Consulta um mapa de rótulos só pelas chaves próprias: um valor vindo do jogo como
+ * 'constructor' ou 'toString' não pode devolver o que está no protótipo.
+ * @param {Record<string, string>} map @param {unknown} k
+ * @returns {string | undefined}
+ */
+export function lookup(map, k) {
+  return typeof k === 'string' && Object.hasOwn(map, k) ? map[k] : undefined;
+}
+
 export const FORM_NAMES = /** @type {Record<string, string>} */ ({
   brasa: 'Brasa',
   mare: 'Maré',
@@ -111,6 +121,24 @@ export const EVENT_LABELS = /** @type {Record<string, string>} */ ({
   down: 'queda',
   up: 'volta',
 });
+/** Modo de entrada (join.mode). */
+export const MODE_LABELS = /** @type {Record<string, string>} */ ({
+  quick: 'partida rápida',
+  create: 'criou sala',
+  join: 'por código',
+  publica: 'pública',
+  privada: 'privada',
+});
+/** Tipos de evento de segurança (security.kind). */
+export const SECURITY_LABELS = /** @type {Record<string, string>} */ ({
+  rate_limit: 'limite de taxa',
+  too_many_conns: 'conexões demais',
+  origin: 'origem recusada',
+  origin_rejected: 'origem recusada',
+  bad_message: 'mensagem inválida',
+  oversized: 'mensagem grande demais',
+  banned: 'bloqueado',
+});
 export const C = {
   accent: '#ffcf3f',
   good: '#58e07a',
@@ -120,6 +148,10 @@ export const C = {
   brasa: '#ff7a3d',
   muted: '#aa9fcc',
   line: '#3f3470',
+  /** Trecho com o jogo fora do ar no gráfico. */
+  downFill: 'rgba(255, 79, 109, 0.14)',
+  /** Trecho sem coleta (o observador estava parado). */
+  gapFill: 'rgba(170, 159, 204, 0.08)',
 };
 
 /** Descrição do evento como nós (nomes em destaque, sempre como texto). @param {Ev} e */
@@ -127,22 +159,24 @@ export function describe(e) {
   const d = e.data;
   const s = (/** @type {string} */ k) => (d[k] === null || d[k] === undefined ? '?' : String(d[k]));
   const b = (/** @type {string} */ k) => h('b', null, s(k));
+  /** Valor traduzido por um mapa (ou o valor cru, como texto). @param {string} k @param {Record<string, string>} map */
+  const tr = (k, map) => lookup(map, d[k]) ?? s(k);
   switch (e.type) {
     case 'join':
-      return [b('name'), ` entrou (${s('mode')}) na sala `, b('room'), ` · ${flag(s('country'))} ${s('country')} · ${d.device === 'mobile' ? 'celular' : 'computador'}`];
+      return [b('name'), ` entrou (${tr('mode', MODE_LABELS)}) na sala `, b('room'), ` · ${flag(s('country'))} ${s('country')} · ${d.device === 'mobile' ? 'celular' : 'computador'}`];
     case 'leave':
       return [b('name'), ' saiu da sala ', b('room'), ` (${s('reason')})${d.inMatch ? ' no meio da partida' : ''}`];
     case 'match_start':
       return ['Partida começou na sala ', b('room'), `: ${s('humans')} humano(s) + ${s('bots')} bot(s)`];
     case 'match_end': {
-      const form = typeof d.form === 'string' ? FORM_NAMES[d.form] ?? d.form : null;
+      const form = typeof d.form === 'string' ? lookup(FORM_NAMES, d.form) ?? d.form : null;
       const who = d.winner ? [b('winner'), ` venceu${form ? ` como ${form}` : ''}`] : ['ninguém venceu'];
       return ['Fim na sala ', b('room'), ': ', ...who, ` · ${fmtClockDur(typeof d.durationMs === 'number' ? d.durationMs : null)} · ${s('humans')} humano(s)`];
     }
     case 'duel':
       return ['Duelo final na sala ', b('room'), ': ', b('a'), ' × ', b('b')];
     case 'security':
-      return [b('kind'), ` · ${s('ipHash')} · ${s('detail')}`];
+      return [h('b', null, tr('kind', SECURITY_LABELS)), ` · ${s('ipHash')} · ${s('detail')}`];
     case 'error':
       return [s('message')];
     case 'restart':
@@ -162,7 +196,7 @@ export function feedItem(e, fresh) {
     'li',
     { class: fresh ? 'new' : '' },
     h('span', { class: 'time', title: new Date(e.t).toLocaleString('pt-BR') }, fmtTime(e.t)),
-    h('span', { class: `ev ev-${e.type}` }, EVENT_LABELS[e.type] ?? e.type),
+    h('span', { class: `ev ev-${e.type}` }, lookup(EVENT_LABELS, e.type) ?? e.type),
     h('span', { class: 'text' }, ...describe(e)),
   );
 }

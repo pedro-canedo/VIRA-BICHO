@@ -58,7 +58,7 @@
         <div class="card big"><p class="label">Jogando</p><p class="num" id="c-playing">—</p></div>
         <div class="card big"><p class="label">Na sala</p><p class="num" id="c-lobby">—</p></div>
         <div class="card big"><p class="label">Assistindo</p><p class="num" id="c-spectating">—</p></div>
-        <div class="card big"><p class="label">Salas ativas</p><p class="num" id="c-rooms">—</p></div>
+        <div class="card big"><p class="label">Salas ativas</p><p class="num" id="c-rooms">—</p><p class="card-hint">com humanos</p></div>
       </section>
 
       <section class="panel chart-panel">
@@ -67,6 +67,7 @@
           <div class="legend">
             <span class="key k-online">online</span>
             <span class="key k-playing">jogando</span>
+            <span class="key k-down">fora do ar</span>
           </div>
           <div class="tabs" role="tablist" id="range-tabs">
             <button type="button" data-range="1h" class="on">1h</button>
@@ -94,7 +95,7 @@
                   <th>Tipo</th>
                   <th>Fase</th>
                   <th class="r">Tempo</th>
-                  <th class="r">Humanos</th>
+                  <th class="r" title="Humanos"><span class="lg">Humanos</span><span class="sm">Hum</span></th>
                   <th class="r">Bots</th>
                   <th class="r">Vivos</th>
                 </tr>
@@ -147,7 +148,7 @@
           <div class="table-wrap">
             <table class="sec">
               <thead>
-                <tr><th>Hora</th><th>Tipo</th><th>IP (hash)</th><th>Detalhe</th></tr>
+                <tr><th>Hora</th><th>Tipo</th><th><span class="lg">IP (hash)</span><span class="sm">IP</span></th><th>Detalhe</th></tr>
               </thead>
               <tbody id="sec-body"></tbody>
             </table>
@@ -156,6 +157,12 @@
         </section>
       </div>
     </main>
-    <footer class="foot" id="foot"></footer>
+    <footer class="foot">
+      <span id="foot"></span>
+      <form method="post" action="/logout" class="logout-all">
+        <input type="hidden" name="all" value="1" />
+        <button type="submit" title="Invalida todas as sessões abertas, inclusive cookies copiados">sair de todos os aparelhos</button>
+      </form>
+    </footer>
   </body>
 </html>

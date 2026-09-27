@@ -49,7 +49,19 @@ export class RingSeries {
     return this.count;
   }
 
-  push(t: number, sample: Record<string, number | null | undefined>): void {
+  /**
+   * Acrescenta uma amostra. Os tempos precisam ser crescentes (a busca binária depende disso):
+   * se o relógio voltou, as amostras "do futuro" (t >= novo t) são descartadas antes.
+   * Retorna quantas foram descartadas.
+   */
+  push(t: number, sample: Record<string, number | null | undefined>): number {
+    if (!Number.isFinite(t)) return 0;
+    let dropped = 0;
+    while (this.count > 0 && this.t[this.idx(this.count - 1)] >= t) {
+      this.head = (this.head - 1 + this.capacity) % this.capacity;
+      this.count--;
+      dropped++;
+    }
     const i = this.head;
     this.t[i] = t;
     for (let f = 0; f < this.fields.length; f++) {
@@ -58,6 +70,7 @@ export class RingSeries {
     }
     this.head = (i + 1) % this.capacity;
     if (this.count < this.capacity) this.count++;
+    return dropped;
   }
 
   /** Índice físico da k-ésima amostra em ordem cronológica. */
@@ -163,13 +176,22 @@ export class RingSeries {
 
   /**
    * Restaura de um buffer salvo. Campos são casados pelo nome (campos novos ficam vazios,
-   * removidos são ignorados); amostras mais antigas que minT são descartadas.
+   * removidos são ignorados); amostras fora de [minT, maxT] são descartadas, e as fora de
+   * ordem também (um salto de relógio salvo não volta a cada reinício).
    */
-  static deserialize(buf: Buffer, capacity: number, fields: readonly string[] = SERIES_FIELDS, minT = 0): RingSeries {
+  static deserialize(
+    buf: Buffer,
+    capacity: number,
+    fields: readonly string[] = SERIES_FIELDS,
+    minT = 0,
+    maxT = Number.POSITIVE_INFINITY,
+  ): RingSeries {
     const s = new RingSeries(capacity, fields);
     if (buf.length < 8 || buf.readUInt32LE(0) !== MAGIC) throw new Error('arquivo de séries inválido');
     const hlen = buf.readUInt32LE(4);
+    if (hlen > 64 * 1024 || 8 + hlen > buf.length) throw new Error('cabeçalho de séries inválido');
     const header = JSON.parse(buf.subarray(8, 8 + hlen).toString('utf8')) as { fields: string[]; count: number };
+    if (!Array.isArray(header.fields) || !Number.isInteger(header.count) || header.count < 0) throw new Error('cabeçalho de séries inválido');
     const n = header.count;
     const base = 8 + hlen;
     if (buf.length < base + n * 8 + header.fields.length * n * 4) throw new Error('arquivo de séries truncado');
@@ -178,7 +200,8 @@ export class RingSeries {
     const start = Math.max(0, n - capacity);
     for (let k = start; k < n; k++) {
       const t = buf.readDoubleLE(base + k * 8);
-      if (t < minT) continue;
+      if (!(t >= minT && t <= maxT)) continue;
+      if (s.count > 0 && t <= s.t[s.idx(s.count - 1)]) continue;
       const sample: Record<string, number | null> = {};
       fields.forEach((f, i) => (sample[f] = map[i] >= 0 ? valuesAt(map[i], k) : null));
       s.push(t, sample);

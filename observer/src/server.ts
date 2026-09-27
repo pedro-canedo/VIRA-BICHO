@@ -3,16 +3,19 @@ import { readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import {
-  RateLimiter,
+  LoginGuard,
   SESSION_COOKIE,
+  SESSION_COOKIE_HOST,
   Sessions,
   bearer,
-  clearCookie,
+  clearCookies,
   clientIp,
-  parseCookies,
+  cookieValues,
+  isDirectLocal,
   sessionCookie,
+  type SessionInfo,
 } from './auth';
-import { ALL_EVENT_TYPES, readDay, type StoredEvent } from './events';
+import { ALL_EVENT_TYPES, readDayLast, type StoredEvent } from './events';
 import { renderMetrics } from './metrics';
 import type { Observer, TickListener } from './observer';
 
@@ -32,7 +35,10 @@ const SECURITY_HEADERS: Record<string, string> = {
   'content-security-policy': CSP,
   'x-frame-options': 'DENY',
   'x-content-type-options': 'nosniff',
-  'referrer-policy': 'no-referrer',
+  // same-origin, e não no-referrer: com no-referrer o navegador manda "Origin: null" no POST do
+  // formulário de login/logout e não há como distinguir de uma origem opaca. Para outros sites
+  // continua não indo nada.
+  'referrer-policy': 'same-origin',
   'cross-origin-opener-policy': 'same-origin',
   'cross-origin-resource-policy': 'same-origin',
   'permissions-policy': 'camera=(), microphone=(), geolocation=()',
@@ -45,6 +51,7 @@ const RANGES: Record<string, { ms: number; points: number }> = {
 };
 
 const MAX_SSE = 32;
+const COOKIE_NAMES = [SESSION_COOKIE_HOST, SESSION_COOKIE] as const;
 
 interface StaticFile {
   body: Buffer;
@@ -82,15 +89,27 @@ export interface ObsServerOptions {
   token: string;
   publicDir: string;
   now?: () => number;
-  /** Tentativas de login (e de Bearer errado) por IP por minuto. */
+  /** Falhas de login (e de Bearer) por cliente por minuto (IPv6 agrupado por /64). */
   loginPerMinute?: number;
+  /** Falhas somando todos os clientes por minuto. */
+  loginGlobalPerMinute?: number;
   heartbeatMs?: number;
+  /** Onde guardar epoch e sessões revogadas (null = só em memória). */
+  sessionFile?: string | null;
+  /** Bytes pendentes num stream SSE acima dos quais o cliente é desconectado. */
+  sseMaxBufferedBytes?: number;
+  /** Tempo máximo que um cliente SSE pode ficar sem ler antes de ser desconectado. */
+  sseStallMs?: number;
 }
 
 export interface ObsServer {
   server: Server;
-  limiter: RateLimiter;
+  guard: LoginGuard;
+  sessions: Sessions;
   closeStreams(): void;
+  /** Soma do que está enfileirado nos streams SSE (bytes). */
+  sseBufferedBytes(): number;
+  readonly sseStreams: number;
 }
 
 function send(res: ServerResponse, status: number, body: string | Buffer, type: string, extra: Record<string, string> = {}): void {
@@ -125,10 +144,19 @@ function readBody(req: IncomingMessage, max: number): Promise<string | null> {
   });
 }
 
-/** Se veio Origin (navegadores mandam em POST), ele precisa bater com o Host. */
-function sameOrigin(req: IncomingMessage): boolean {
+/**
+ * Proteção de CSRF para os POST de login/logout (além do SameSite=Strict do cookie).
+ * - Sec-Fetch-Site, quando presente (navegadores atuais), precisa ser same-origin;
+ * - Origin "null" (origem opaca) só vale junto com Sec-Fetch-Site: same-origin;
+ * - outro Origin precisa bater com o Host;
+ * - sem nenhum dos dois é um cliente que não é navegador (curl), sem risco de CSRF.
+ */
+export function sameOrigin(req: IncomingMessage): boolean {
+  const site = req.headers['sec-fetch-site'];
+  if (site !== undefined && site !== 'same-origin') return false;
   const origin = req.headers.origin;
   if (!origin) return true;
+  if (origin === 'null') return site === 'same-origin';
   try {
     return new URL(origin).host === req.headers.host;
   } catch {
@@ -136,34 +164,59 @@ function sameOrigin(req: IncomingMessage): boolean {
   }
 }
 
+interface StreamCtl {
+  res: ServerResponse;
+  /** Encerra se a sessão que abriu o stream deixou de valer. */
+  recheck(): void;
+  close(): void;
+}
+
 export function createObsServer(obs: Observer, opts: ObsServerOptions): ObsServer {
-  const sessions = new Sessions(opts.token);
-  const limiter = new RateLimiter(opts.loginPerMinute ?? 5, 60_000);
+  const sessions = new Sessions(opts.token, opts.sessionFile ?? null);
+  const guard = new LoginGuard(opts.loginPerMinute ?? 5, opts.loginGlobalPerMinute ?? 30);
   const statics = loadStatic(opts.publicDir);
   const now = opts.now ?? Date.now;
-  const streams = new Set<ServerResponse>();
+  const maxBuffered = opts.sseMaxBufferedBytes ?? 256 * 1024;
+  const stallMs = opts.sseStallMs ?? 60_000;
+  const streams = new Set<StreamCtl>();
   // Um payload por tick é serializado uma vez, mesmo com vários painéis abertos.
   const serialized = new WeakMap<object, string>();
 
   const loginPage = (msg: keyof typeof LOGIN_MESSAGES) =>
     statics['/login'].body.toString('utf8').replace('<!--MSG-->', LOGIN_MESSAGES[msg]);
 
-  /** 'ok' | 'none' (sem credencial) | 'bad' (credencial errada) | 'limited'. */
-  function authenticate(req: IncomingMessage): 'ok' | 'none' | 'bad' | 'limited' {
-    const cookie = parseCookies(req.headers.cookie)[SESSION_COOKIE];
-    if (cookie && sessions.verify(cookie, now())) return 'ok';
+  /** Qualquer um dos cookies de sessão presentes que seja válido (duplicatas plantadas não derrubam). */
+  function sessionOf(req: IncomingMessage): SessionInfo | null {
+    for (const v of cookieValues(req.headers.cookie, COOKIE_NAMES)) {
+      const s = sessions.check(v, now());
+      if (s) return s;
+    }
+    return null;
+  }
+
+  type Auth = { ok: true; session: SessionInfo | null } | { ok: false; why: 'none' | 'bad' } | { ok: false; why: 'limited'; retryAfterS: number };
+
+  function authenticate(req: IncomingMessage): Auth {
+    const session = sessionOf(req);
+    if (session) return { ok: true, session };
     const b = bearer(req);
     if (b !== null) {
       const ip = clientIp(req);
-      if (limiter.blocked(ip, now())) return 'limited';
-      if (sessions.checkToken(b)) return 'ok';
-      limiter.hit(ip, now());
-      return 'bad';
+      const t = now();
+      const wait = guard.blockedFor(ip, t);
+      // Bloqueio antes de conferir: quem está bloqueado não descobre se acertou. A exceção é quem
+      // conecta direto no próprio celular (sem proxy): esse já lê o secrets.env, então um coletor
+      // local com o token certo não fica travado porque outro processo local errou.
+      if (wait && !isDirectLocal(req)) return { ok: false, why: 'limited', retryAfterS: wait };
+      if (sessions.checkToken(b)) return { ok: true, session: null };
+      if (wait) return { ok: false, why: 'limited', retryAfterS: wait };
+      guard.fail(ip, t);
+      return { ok: false, why: 'bad' };
     }
-    return cookie ? 'bad' : 'none';
+    return { ok: false, why: cookieValues(req.headers.cookie, COOKIE_NAMES).length ? 'bad' : 'none' };
   }
 
-  function openStream(req: IncomingMessage, res: ServerResponse): void {
+  function openStream(req: IncomingMessage, res: ServerResponse, session: SessionInfo | null): void {
     if (streams.size >= MAX_SSE) {
       json(res, 503, { error: 'muitos painéis conectados' });
       return;
@@ -175,32 +228,102 @@ export function createObsServer(obs: Observer, opts: ObsServerOptions): ObsServe
       connection: 'keep-alive',
       'x-accel-buffering': 'no',
     });
-    streams.add(res);
-    const write = (event: string, data: string) => {
-      if (!res.writableEnded) res.write(`event: ${event}\ndata: ${data}\n\n`);
+    let closed = false;
+    /** Ticks acumulados enquanto o cliente não lê (só o resumo mais recente + os eventos). */
+    let pending: { summary: unknown; events: StoredEvent[] } | null = null;
+    let stalledSince: number | null = null;
+
+    const ctl: StreamCtl = {
+      res,
+      recheck() {
+        if (session && !sessions.isValid(session, now())) {
+          // Sessão encerrada (logout, "sair de todos" ou expirou): avisa o painel e fecha.
+          raw('event: bye\ndata: {}\n\n');
+          ctl.close();
+        }
+      },
+      close() {
+        if (closed) return;
+        closed = true;
+        cleanup();
+        res.end();
+      },
     };
-    res.write('retry: 3000\n\n');
-    write('hello', JSON.stringify({ summary: obs.summary(), events: obs.events.query({ limit: 150 }).reverse() }));
-    const listener: TickListener = (payload) => {
+    const kill = () => {
+      if (closed) return;
+      closed = true;
+      cleanup();
+      res.destroy();
+    };
+    /** Escreve respeitando o buffer: cliente que não lê não acumula memória sem limite. */
+    const raw = (chunk: string): boolean => {
+      if (closed || res.writableEnded || res.destroyed) return false;
+      if (res.writableLength > maxBuffered) {
+        kill();
+        return false;
+      }
+      res.write(chunk);
+      return true;
+    };
+    /** true = o cliente está atrasado (fila cheia): não manda mais nada até o 'drain'. */
+    const congested = (): boolean => {
+      if (!res.writableNeedDrain) {
+        stalledSince = null;
+        return false;
+      }
+      stalledSince ??= performance.now();
+      if (performance.now() - stalledSince > stallMs) kill();
+      return true;
+    };
+    const sendTick = (payload: { summary: unknown; events: StoredEvent[] }) => {
       let s = serialized.get(payload);
       if (s === undefined) {
         s = JSON.stringify(payload);
         serialized.set(payload, s);
       }
-      write('tick', s);
+      raw(`event: tick\ndata: ${s}\n\n`);
     };
+
+    streams.add(ctl);
+    raw('retry: 3000\n\n');
+    raw(`event: hello\ndata: ${JSON.stringify({ summary: obs.summary(), events: obs.events.query({ limit: 150 }).reverse() })}\n\n`);
+    const listener: TickListener = (payload) => {
+      ctl.recheck();
+      if (closed) return;
+      if (congested() || pending) {
+        // Coalesce: guarda só o resumo mais novo e os eventos (limitados) até o cliente voltar a ler.
+        pending = { summary: payload.summary, events: [...(pending?.events ?? []), ...payload.events].slice(-500) };
+        if (!closed && !res.writableNeedDrain) flushPending();
+        return;
+      }
+      sendTick(payload);
+    };
+    const flushPending = () => {
+      if (!pending || closed) return;
+      const p = pending;
+      pending = null;
+      sendTick(p);
+    };
+    res.on('drain', () => {
+      stalledSince = null;
+      flushPending();
+    });
     const off = obs.onTick(listener);
-    // Comentário periódico para o túnel/proxies não fecharem a conexão ociosa.
+    // Comentário periódico para o túnel/proxies não fecharem a conexão ociosa; também confere a
+    // sessão e o cliente travado quando não há ticks (jogo fora do ar).
     const hb = setInterval(() => {
-      if (!res.writableEnded) res.write(': hb\n\n');
+      ctl.recheck();
+      if (closed || congested()) return;
+      raw(': hb\n\n');
     }, opts.heartbeatMs ?? 20_000);
-    const cleanup = () => {
+    function cleanup() {
       off();
       clearInterval(hb);
-      streams.delete(res);
-    };
-    req.on('close', cleanup);
-    res.on('close', cleanup);
+      streams.delete(ctl);
+      pending = null;
+    }
+    req.on('close', () => ctl.close());
+    res.on('close', () => ctl.close());
   }
 
   async function handleLogin(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -210,18 +333,45 @@ export function createObsServer(obs: Observer, opts: ObsServerOptions): ObsServe
       return;
     }
     const ip = clientIp(req);
-    if (!limiter.hit(ip, now())) {
-      send(res, 429, loginPage('limited'), html, { 'retry-after': String(limiter.retryAfterS(ip, now())) });
+    const t = now();
+    const wait = guard.blockedFor(ip, t);
+    const local = isDirectLocal(req);
+    const limited = () => send(res, 429, loginPage('limited'), html, { 'retry-after': String(wait) });
+    if (wait && !local) {
+      limited();
       return;
     }
     const body = await readBody(req, 4096);
     const token = body === null ? '' : (new URLSearchParams(body).get('token') ?? '').trim();
     if (!token || !sessions.checkToken(token)) {
+      if (wait) {
+        limited();
+        return;
+      }
+      // Só as falhas contam: vários aparelhos atrás do mesmo IP podem entrar à vontade.
+      guard.fail(ip, t);
       send(res, 401, loginPage('wrong'), html);
       return;
     }
     res.writeHead(303, { ...SECURITY_HEADERS, location: '/', 'set-cookie': sessionCookie(sessions.issue(now()), req), 'cache-control': 'no-store' });
     res.end();
+  }
+
+  async function handleLogout(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!sameOrigin(req)) {
+      send(res, 403, 'origem recusada', 'text/plain; charset=utf-8');
+      return;
+    }
+    const body = await readBody(req, 1024);
+    const all = new URLSearchParams(body ?? '').get('all') === '1';
+    const session = sessionOf(req);
+    if (session) {
+      // O cookie deixa de valer no servidor, não só no navegador (uma cópia dele também morre).
+      if (all) sessions.revokeAll();
+      else sessions.revoke(session, now());
+      for (const s of [...streams]) s.recheck();
+    }
+    res.writeHead(303, { ...SECURITY_HEADERS, location: '/login', 'set-cookie': clearCookies(req), 'cache-control': 'no-store' }).end();
   }
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -248,28 +398,20 @@ export function createObsServer(obs: Observer, opts: ObsServerOptions): ObsServe
         send(res, 405, 'método não permitido', 'text/plain; charset=utf-8', { allow: 'GET, POST' });
         return;
       }
-      const cookie = parseCookies(req.headers.cookie)[SESSION_COOKIE];
-      if (cookie && sessions.verify(cookie, now())) {
+      if (sessionOf(req)) {
         res.writeHead(302, { ...SECURITY_HEADERS, location: '/' }).end();
         return;
       }
       send(res, 200, loginPage('none'), 'text/html; charset=utf-8');
       return;
     }
-    if (path === '/logout' && method === 'POST') {
-      if (!sameOrigin(req)) {
-        send(res, 403, 'origem recusada', 'text/plain; charset=utf-8');
-        return;
-      }
-      res.writeHead(303, { ...SECURITY_HEADERS, location: '/login', 'set-cookie': clearCookie(req) }).end();
-      return;
-    }
+    if (path === '/logout' && method === 'POST') return handleLogout(req, res);
 
     // Daqui para baixo, tudo exige autenticação.
     const auth = authenticate(req);
-    if (auth !== 'ok') {
-      if (auth === 'limited') {
-        json(res, 429, { error: 'muitas tentativas' }, { 'retry-after': String(limiter.retryAfterS(clientIp(req), now())) });
+    if (!auth.ok) {
+      if (auth.why === 'limited') {
+        json(res, 429, { error: 'muitas tentativas' }, { 'retry-after': String(auth.retryAfterS) });
         return;
       }
       if (path === '/' && method === 'GET') {
@@ -317,10 +459,10 @@ export function createObsServer(obs: Observer, opts: ObsServerOptions): ObsServe
             json(res, 400, { error: 'day deve ser AAAA-MM-DD' });
             return;
           }
-          events = (await readDay(obs.cfg.dataDir, day))
-            .filter((e) => (!types.length || types.includes(e.type)) && (!before || e.id < before))
-            .slice(-limit)
-            .reverse();
+          // Lido em fluxo: só os últimos `limit` ficam na memória, qualquer que seja o tamanho do arquivo.
+          events = (
+            await readDayLast(obs.cfg.dataDir, day, limit, (e) => (!types.length || types.includes(e.type)) && (!before || e.id < before))
+          ).reverse();
         } else {
           events = obs.events.query({ limit, types, beforeId: before || undefined });
         }
@@ -328,7 +470,7 @@ export function createObsServer(obs: Observer, opts: ObsServerOptions): ObsServe
         return;
       }
       case '/api/stream':
-        openStream(req, res);
+        openStream(req, res, auth.session);
         return;
       case '/metrics':
         send(res, 200, renderMetrics(obs), 'text/plain; version=0.0.4; charset=utf-8');
@@ -351,10 +493,18 @@ export function createObsServer(obs: Observer, opts: ObsServerOptions): ObsServe
 
   return {
     server,
-    limiter,
+    guard,
+    sessions,
     closeStreams() {
-      for (const r of streams) r.end();
-      streams.clear();
+      for (const s of [...streams]) s.close();
+    },
+    sseBufferedBytes() {
+      let n = 0;
+      for (const s of streams) n += s.res.writableLength;
+      return n;
+    },
+    get sseStreams() {
+      return streams.size;
     },
   };
 }

@@ -1,6 +1,8 @@
 // Eventos: buffer em memória para o painel + arquivos NDJSON diários em disco.
-import { appendFile, mkdir, readFile, readdir, unlink } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { appendFile, mkdir, open, readdir, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
+import { createInterface } from 'node:readline';
 import { OBS_EVENT_TYPES, type ObsEventValue } from '../../shared/src/obs';
 
 /** Tipos gerados pelo próprio observador. */
@@ -45,17 +47,41 @@ export function dayKey(t: number): string {
 }
 
 const FILE_RE = /^events-(\d{4})-(\d{2})-(\d{2})\.ndjson$/;
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+export const dayFile = (dir: string, day: string) => join(dir, `events-${day}.ndjson`);
+
+export interface EventStoreOptions {
+  /** Eventos mantidos em memória para o feed. */
+  capacity?: number;
+  /** Teto de bytes por arquivo diário (o resto do dia é descartado, com aviso no log). */
+  maxDayBytes?: number;
+  /** Quanto do fim de cada arquivo é lido ao restaurar o feed. */
+  restoreTailBytes?: number;
+}
 
 export class EventStore {
   private ring: StoredEvent[] = [];
   private pending: StoredEvent[] = [];
   private nextId = 1;
   private writing: Promise<void> = Promise.resolve();
+  private readonly capacity: number;
+  private readonly maxDayBytes: number;
+  private readonly restoreTailBytes: number;
+  /** Bytes já gravados em cada arquivo diário (lidos do disco na primeira escrita do dia). */
+  private dayBytes = new Map<string, number>();
+  /** Eventos descartados por dia por causa do teto. */
+  readonly dropped = new Map<string, number>();
 
   constructor(
     private readonly dir: string | null,
-    private readonly capacity = 1_000,
-  ) {}
+    opts: EventStoreOptions | number = {},
+  ) {
+    const o = typeof opts === 'number' ? { capacity: opts } : opts;
+    this.capacity = o.capacity ?? 1_000;
+    this.maxDayBytes = o.maxDayBytes ?? 20 * 1024 * 1024;
+    this.restoreTailBytes = o.restoreTailBytes ?? 512 * 1024;
+  }
 
   get lastId(): number {
     return this.nextId - 1;
@@ -98,7 +124,32 @@ export class EventStore {
       }
       try {
         await mkdir(dir, { recursive: true });
-        for (const [k, lines] of byDay) await appendFile(join(dir, `events-${k}.ndjson`), lines.join('\n') + '\n', { mode: 0o600 });
+        for (const [k, lines] of byDay) {
+          const file = dayFile(dir, k);
+          let used = this.dayBytes.get(k);
+          if (used === undefined) {
+            used = await stat(file).then((st) => st.size, () => 0);
+            // Só guarda o dia corrente (e o anterior) para o mapa não crescer.
+            if (this.dayBytes.size > 4) this.dayBytes.clear();
+          }
+          let text = '';
+          let bytes = 0;
+          let kept = 0;
+          for (const line of lines) {
+            const n = Buffer.byteLength(line) + 1;
+            if (used + bytes + n > this.maxDayBytes) break;
+            text += line + '\n';
+            bytes += n;
+            kept++;
+          }
+          if (kept < lines.length) {
+            const before = this.dropped.get(k) ?? 0;
+            if (before === 0) console.error(`[obs] ${file} passou de ${this.maxDayBytes} bytes: eventos do resto do dia não serão gravados em disco`);
+            this.dropped.set(k, before + lines.length - kept);
+          }
+          if (text) await appendFile(file, text, { mode: 0o600 });
+          this.dayBytes.set(k, used + bytes);
+        }
       } catch (err) {
         console.error('[obs] falha ao gravar eventos:', (err as Error).message);
       }
@@ -106,12 +157,15 @@ export class EventStore {
     return this.writing;
   }
 
-  /** Recarrega os últimos eventos (hoje e ontem) para o feed não começar vazio após reinício. */
+  /**
+   * Recarrega os últimos eventos (fim do arquivo de ontem e de hoje) para o feed não começar
+   * vazio após reinício. Lê só o final de cada arquivo: um arquivo diário enorme não estoura o heap.
+   */
   async restore(now = Date.now()): Promise<StoredEvent[]> {
     if (!this.dir) return [];
     const loaded: StoredEvent[] = [];
     for (const k of [dayKey(now - 86_400_000), dayKey(now)]) {
-      loaded.push(...(await readDay(this.dir, k)));
+      loaded.push(...(await readDayTail(this.dir, k, this.restoreTailBytes)));
     }
     const tail = loaded.slice(-this.capacity);
     this.ring = tail;
@@ -143,26 +197,86 @@ export class EventStore {
   }
 }
 
-/** Lê um arquivo diário (linhas inválidas são ignoradas). */
-export async function readDay(dir: string, day: string): Promise<StoredEvent[]> {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return [];
-  let text: string;
+/** Uma linha do NDJSON como evento (null se inválida ou truncada). */
+export function parseLine(line: string): StoredEvent | null {
+  if (!line || line.length > 64 * 1024) return null;
   try {
-    text = await readFile(join(dir, `events-${day}.ndjson`), 'utf8');
+    const e = JSON.parse(line) as StoredEvent;
+    if (e && typeof e.id === 'number' && typeof e.t === 'number' && typeof e.type === 'string' && e.type.length <= 32) {
+      return { id: e.id, t: e.t, type: e.type, seq: typeof e.seq === 'number' ? e.seq : undefined, data: sanitizeData(e.data) };
+    }
+  } catch {
+    // linha truncada (queda no meio de uma escrita)
+  }
+  return null;
+}
+
+/** Lê só os últimos `maxBytes` de um arquivo diário (a primeira linha, parcial, é descartada). */
+export async function readDayTail(dir: string, day: string, maxBytes: number): Promise<StoredEvent[]> {
+  if (!DAY_RE.test(day)) return [];
+  let h;
+  try {
+    h = await open(dayFile(dir, day), 'r');
   } catch {
     return [];
   }
-  const out: StoredEvent[] = [];
-  for (const line of text.split('\n')) {
-    if (!line) continue;
-    try {
-      const e = JSON.parse(line) as StoredEvent;
-      if (typeof e.id === 'number' && typeof e.t === 'number' && typeof e.type === 'string') {
-        out.push({ id: e.id, t: e.t, type: e.type, seq: e.seq, data: sanitizeData(e.data) });
-      }
-    } catch {
-      // linha truncada (queda no meio de uma escrita)
+  try {
+    const { size } = await h.stat();
+    const start = Math.max(0, size - maxBytes);
+    const buf = Buffer.alloc(size - start);
+    await h.read(buf, 0, buf.length, start);
+    const lines = buf.toString('utf8').split('\n');
+    if (start > 0) lines.shift();
+    const out: StoredEvent[] = [];
+    for (const line of lines) {
+      const e = parseLine(line);
+      if (e) out.push(e);
     }
+    return out;
+  } catch {
+    return [];
+  } finally {
+    await h.close();
   }
+}
+
+/** Percorre um arquivo diário linha a linha, sem carregá-lo inteiro na memória. */
+export async function forEachInDay(dir: string, day: string, fn: (e: StoredEvent) => void): Promise<void> {
+  if (!DAY_RE.test(day)) return;
+  const stream = createReadStream(dayFile(dir, day), { encoding: 'utf8', highWaterMark: 64 * 1024 });
+  const opened = await new Promise<boolean>((resolveOpen) => {
+    stream.once('open', () => resolveOpen(true));
+    stream.once('error', () => resolveOpen(false));
+  });
+  if (!opened) return;
+  const rl = createInterface({ input: stream, crlfDelay: Infinity });
+  try {
+    for await (const line of rl) {
+      const e = parseLine(line);
+      if (e) fn(e);
+    }
+  } catch {
+    // erro de leitura no meio: fica com o que deu para ler
+  } finally {
+    rl.close();
+    stream.destroy();
+  }
+}
+
+/** Os últimos `limit` eventos de um dia que passam no filtro (mais antigos primeiro). */
+export async function readDayLast(dir: string, day: string, limit: number, filter: (e: StoredEvent) => boolean = () => true): Promise<StoredEvent[]> {
+  const out: StoredEvent[] = [];
+  await forEachInDay(dir, day, (e) => {
+    if (!filter(e)) return;
+    out.push(e);
+    if (out.length > limit * 2) out.splice(0, out.length - limit);
+  });
+  return out.slice(-limit);
+}
+
+/** Lê um arquivo diário inteiro (só para arquivos pequenos: testes e ferramentas). */
+export async function readDay(dir: string, day: string): Promise<StoredEvent[]> {
+  const out: StoredEvent[] = [];
+  await forEachInDay(dir, day, (e) => out.push(e));
   return out;
 }

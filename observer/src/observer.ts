@@ -1,11 +1,12 @@
 // Orquestra coletas, séries, eventos, agregados e persistência.
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ObsStats } from '../../shared/src/obs';
-import { GameCollector, type CollectorCursor } from './collector';
+import { GameCollector, type CollectorCursor, type GameStatus } from './collector';
 import type { ObsConfig } from './config';
-import { DayAggregator, type DayStats } from './daystats';
-import { EventStore, type StoredEvent } from './events';
+import { DayAggregator, sanitizeDayStats, type DayStats } from './daystats';
+import { EventStore, dayKey, forEachInDay, type StoredEvent } from './events';
+import { writeAtomic } from './fsutil';
 import { PhoneReader, type PhoneMetrics } from './phone';
 import { checkPublic, emptyPublicCheck, type PublicCheck } from './publiccheck';
 import { readServices, type ServiceStatus } from './services';
@@ -26,10 +27,32 @@ export function activeRooms(stats: ObsStats | null): number | null {
   return stats ? stats.rooms.filter((r) => r.humans > 0).length : null;
 }
 
-async function writeAtomic(path: string, data: string | Buffer): Promise<void> {
-  const tmp = `${path}.tmp`;
-  await writeFile(tmp, data, { mode: 0o600 });
-  await rename(tmp, path);
+const finiteOrNull = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+
+/** Cursor salvo, validado (null se não servir). */
+function sanitizeCursor(v: unknown): CollectorCursor | null {
+  if (!v || typeof v !== 'object') return null;
+  const c = v as Record<string, unknown>;
+  const nextSeq = finiteOrNull(c.nextSeq);
+  if (nextSeq === null || nextSeq < 0) return null;
+  return { startedAt: finiteOrNull(c.startedAt), nextSeq: Math.floor(nextSeq) };
+}
+
+/** Última checagem pública salva, validada campo a campo. */
+function sanitizePublic(v: unknown, url: string): PublicCheck | null {
+  if (!v || typeof v !== 'object') return null;
+  const p = v as Record<string, unknown>;
+  if (p.url !== url) return null;
+  return {
+    url,
+    ok: typeof p.ok === 'boolean' ? p.ok : null,
+    status: finiteOrNull(p.status),
+    latencyMs: finiteOrNull(p.latencyMs),
+    checkedAt: finiteOrNull(p.checkedAt),
+    lastOkAt: finiteOrNull(p.lastOkAt),
+    error: typeof p.error === 'string' ? p.error.slice(0, 120) : null,
+    consecutiveFailures: Math.max(0, finiteOrNull(p.consecutiveFailures) ?? 0),
+  };
 }
 
 export class Observer {
@@ -46,6 +69,9 @@ export class Observer {
   private readonly listeners = new Set<TickListener>();
   private timers: NodeJS.Timeout[] = [];
   private readonly now: () => number;
+  private running = false;
+  private sampling: Promise<SeriesSample> | null = null;
+  private publicChecking: Promise<void> | null = null;
 
   constructor(
     readonly cfg: ObsConfig,
@@ -54,7 +80,7 @@ export class Observer {
     this.now = opts.now ?? Date.now;
     this.startedAt = this.now();
     const persist = opts.persist ?? true;
-    this.events = new EventStore(persist ? cfg.dataDir : null);
+    this.events = new EventStore(persist ? cfg.dataDir : null, { maxDayBytes: cfg.maxDayBytes });
     this.collector = new GameCollector({
       gameUrl: cfg.gameUrl,
       internalToken: cfg.internalToken,
@@ -84,26 +110,34 @@ export class Observer {
     const now = this.now();
     try {
       const buf = await readFile(join(dir, 'series.bin'));
-      this.series = RingSeries.deserialize(buf, this.series.capacity, SERIES_FIELDS, now - this.cfg.seriesWindowMs);
+      // Amostras "do futuro" (relógio que tinha saltado para frente) ficam de fora.
+      this.series = RingSeries.deserialize(buf, this.series.capacity, SERIES_FIELDS, now - this.cfg.seriesWindowMs, now + 60_000);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') console.error('[obs] séries não restauradas:', (err as Error).message);
     }
-    let saved: SavedState | null = null;
+    let saved: Partial<SavedState> | null = null;
     try {
-      saved = JSON.parse(await readFile(join(dir, 'state.json'), 'utf8')) as SavedState;
+      const raw: unknown = JSON.parse(await readFile(join(dir, 'state.json'), 'utf8'));
+      if (raw && typeof raw === 'object' && (raw as SavedState).v === 1) saved = raw as Partial<SavedState>;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') console.error('[obs] estado não restaurado:', (err as Error).message);
     }
-    const restored = await this.events.restore(now);
-    if (saved?.v === 1) {
-      if (saved.cursor && typeof saved.cursor.nextSeq === 'number') this.collector.cursor = { ...saved.cursor };
-      if (saved.public?.url === this.cfg.publicUrl) this.pub = { ...emptyPublicCheck(this.cfg.publicUrl), ...saved.public };
-      this.day = new DayAggregator(now, saved.day);
+    await this.events.restore(now);
+    let dayRestored = false;
+    if (saved) {
+      const cursor = sanitizeCursor(saved.cursor);
+      if (cursor) this.collector.cursor = cursor;
+      const pub = sanitizePublic(saved.public, this.cfg.publicUrl);
+      if (pub) this.pub = pub;
+      // Formato validado campo a campo: um state.json com tipos errados não quebra a coleta.
+      dayRestored = sanitizeDayStats(saved.day)?.day === dayKey(now);
+      if (dayRestored) this.day = new DayAggregator(now, saved.day);
     }
-    if (!saved || saved.day?.day !== this.day.stats.day) {
-      // Sem agregados salvos para hoje: refaz a partir dos eventos de hoje e do pico nas séries.
+    if (!dayRestored) {
+      // Sem agregados salvos para hoje: refaz a partir do arquivo de hoje (lido em fluxo, linha a
+      // linha, para não carregar um arquivo grande inteiro) e do pico nas séries.
       this.day = new DayAggregator(now);
-      for (const e of restored) this.day.onEvent(e);
+      await forEachInDay(dir, dayKey(now), (e) => this.day.onEvent(e));
       const midnight = new Date(now);
       midnight.setHours(0, 0, 0, 0);
       const peak = this.series.max('online', midnight.getTime());
@@ -113,6 +147,7 @@ export class Observer {
   }
 
   start(): void {
+    this.running = true;
     const iv = this.cfg.intervals;
     const every = (ms: number, fn: () => Promise<unknown>) => {
       const run = () => fn().catch((err) => console.error('[obs]', (err as Error).message));
@@ -128,31 +163,49 @@ export class Observer {
   }
 
   async stop(): Promise<void> {
+    this.running = false;
     this.timers.forEach(clearInterval);
     this.timers = [];
     await this.persist();
   }
 
   async pollGame(): Promise<StoredEvent[]> {
+    const before: GameStatus = this.collector.state.status;
     const added = await this.collector.poll();
     for (const e of added) this.day.onEvent(e);
     const stats = this.collector.fresh();
     if (stats) this.day.onOnline(this.now(), stats.players.online);
     if (added.length) void this.events.flush();
-    if (this.listeners.size) {
-      const payload = { summary: this.summary(), events: added };
-      for (const fn of this.listeners) {
-        try {
-          fn(payload);
-        } catch {
-          // um cliente SSE com problema não derruba os outros
-        }
-      }
-    }
+    // O /health público passa pelo jogo: quando o jogo cai ou volta, a última checagem do túnel
+    // fica velha. Refaz na hora em vez de esperar até 60 s.
+    const after = this.collector.state.status;
+    if (this.running && before !== after && before !== 'unknown') void this.refreshPublic().catch(() => {});
+    this.broadcast({ summary: this.summary(), events: added });
     return added;
   }
 
-  async sample(): Promise<SeriesSample> {
+  /** Entrega um tick aos painéis conectados (SSE). */
+  broadcast(payload: Parameters<TickListener>[0]): void {
+    for (const fn of this.listeners) {
+      try {
+        fn(payload);
+      } catch {
+        // um cliente SSE com problema não derruba os outros
+      }
+    }
+  }
+
+  /** Uma amostra por vez: se a leitura de /proc e /sys demorar, a próxima chamada reaproveita a em andamento. */
+  sample(): Promise<SeriesSample> {
+    if (!this.sampling) {
+      this.sampling = this.doSample().finally(() => {
+        this.sampling = null;
+      });
+    }
+    return this.sampling;
+  }
+
+  private async doSample(): Promise<SeriesSample> {
     this.phone = await this.phoneReader.read();
     const s = this.collector.fresh();
     const p = this.phone;
@@ -171,7 +224,8 @@ export class Observer {
       tempC: p.tempC ?? p.battery?.tempC ?? null,
       battery: p.battery?.capacity ?? null,
     };
-    this.series.push(this.now(), sample);
+    const dropped = this.series.push(this.now(), sample);
+    if (dropped) console.error(`[obs] relógio voltou: ${dropped} amostra(s) com horário posterior descartada(s)`);
     return sample;
   }
 
@@ -180,8 +234,17 @@ export class Observer {
     this.servicesAt = this.now();
   }
 
-  async refreshPublic(): Promise<void> {
-    this.pub = await checkPublic(this.pub, this.cfg.publicTimeoutMs, this.now());
+  refreshPublic(): Promise<void> {
+    if (!this.publicChecking) {
+      this.publicChecking = checkPublic(this.pub, this.cfg.publicTimeoutMs, this.now())
+        .then((r) => {
+          this.pub = r;
+        })
+        .finally(() => {
+          this.publicChecking = null;
+        });
+    }
+    return this.publicChecking;
   }
 
   async persist(): Promise<void> {
@@ -237,6 +300,7 @@ export class Observer {
         uptimeMs: now - this.startedAt,
         rssMB: Math.round((mem.rss / 1048576) * 10) / 10,
         privateMB: this.phone?.self.privateMB ?? null,
+        pssMB: this.phone?.self.pssMB ?? null,
         cpuPct: this.phone?.self.cpuPct ?? null,
         sseClients: this.listeners.size,
         seriesPoints: this.series.size,

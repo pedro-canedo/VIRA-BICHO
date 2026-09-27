@@ -25,7 +25,7 @@ cfg.intervals.publicCheck = 10_000;
 
 const obs = new Observer(cfg);
 await obs.init();
-const { server } = createObsServer(obs, { token: TOKEN, publicDir: cfg.publicDir });
+const { server } = createObsServer(obs, { token: TOKEN, publicDir: cfg.publicDir, sessionFile: join(cfg.dataDir, 'sessions.json') });
 server.listen(cfg.port, () => {
   console.log(`observador de desenvolvimento em http://localhost:${cfg.port}  (token: ${TOKEN})`);
   console.log(`jogo falso em ${game.url} · dados em ${cfg.dataDir}`);

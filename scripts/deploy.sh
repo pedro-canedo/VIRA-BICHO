@@ -27,7 +27,8 @@ for s in vira-bicho vira-bicho-obs; do
     continue
   fi
   rm -f "$SV/down"
-  sv restart "$SV"
+  # Uma falha (ex.: timeout do sv) não impede de reiniciar o outro serviço.
+  sv restart "$SV" || echo "aviso: sv restart $s falhou" >&2
 done
 REMOTE
 
@@ -46,6 +47,30 @@ wait_for() {
   return 1
 }
 
+# O observador é checado de dentro do celular (localhost): funciona também com OBS_HOST=127.0.0.1,
+# quando o painel só é acessível pelo túnel.
+wait_for_obs() {
+  for _ in $(seq 1 15); do
+    if ssh -p "$PORT" "$HOST" node - <<'JS'
+fetch('http://127.0.0.1:3001/healthz', { signal: AbortSignal.timeout(3000) }).then(
+  async (r) => {
+    console.log(await r.text());
+    process.exit(r.ok ? 0 : 1);
+  },
+  () => process.exit(1),
+);
+JS
+    then
+      echo "Observador ok: http://127.0.0.1:3001/healthz (no celular)"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "Observador não respondeu na porta 3001 do celular" >&2
+  ssh -p "$PORT" "$HOST" 'tail -20 "$PREFIX/var/log/sv/vira-bicho-obs/current"' >&2 || true
+  return 1
+}
+
 wait_for "Jogo" "http://$HOST:3000/health" vira-bicho
-wait_for "Observador" "http://$HOST:3001/healthz" vira-bicho-obs
-echo "Deploy ok: jogo em http://$HOST:3000 · painel em http://$HOST:3001"
+wait_for_obs
+echo "Deploy ok: jogo em http://$HOST:3000 · painel pelo túnel (ou http://$HOST:3001 na rede local)"

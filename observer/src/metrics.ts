@@ -113,6 +113,7 @@ export function renderMetrics(obs: Observer): string {
   }
   b.add('vb_obs_rss_megabytes', 'gauge', 'RSS do observador (MB).', sum.observer.rssMB);
   b.add('vb_obs_private_megabytes', 'gauge', 'Memória privada (RssAnon) do observador (MB).', sum.observer.privateMB);
+  b.add('vb_obs_pss_megabytes', 'gauge', 'PSS do observador (MB): RSS com as páginas compartilhadas divididas.', sum.observer.pssMB);
   b.add('vb_obs_cpu_percent', 'gauge', 'CPU do observador (% de um núcleo).', sum.observer.cpuPct);
   b.add('vb_obs_sse_clients', 'gauge', 'Painéis conectados por SSE.', sum.observer.sseClients);
   return b.toString();

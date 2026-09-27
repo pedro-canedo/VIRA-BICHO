@@ -34,6 +34,8 @@ export interface ObsConfig {
   seriesWindowMs: number;
   /** Dias de NDJSON mantidos em disco. */
   keepDays: number;
+  /** Teto de cada arquivo diário de eventos (bytes). */
+  maxDayBytes: number;
 }
 
 type Env = Record<string, string | undefined>;
@@ -77,5 +79,6 @@ export function loadConfig(env: Env = process.env): ObsConfig {
     publicTimeoutMs: 10_000,
     seriesWindowMs: 24 * 3600_000,
     keepDays: 7,
+    maxDayBytes: int(env.OBS_MAX_DAY_MB, 20) * 1024 * 1024,
   };
 }

@@ -311,6 +311,12 @@ main {
   color: var(--muted);
 }
 
+.card .card-hint {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
 /* ---------- painéis ---------- */
 
 .grid {
@@ -366,6 +372,11 @@ main {
 
 .k-playing::before {
   background: var(--good);
+}
+
+.k-down::before {
+  height: 10px;
+  background: rgba(255, 79, 109, 0.35);
 }
 
 .tabs {
@@ -425,8 +436,23 @@ canvas {
 
 /* ---------- tabelas ---------- */
 
+/* Sombra na borda direita quando a tabela tem mais colunas do que cabe: a "tampa" (local) anda
+   com o conteúdo e cobre a sombra (scroll) quando se chega ao fim da rolagem. */
 .table-wrap {
   overflow-x: auto;
+  background:
+    linear-gradient(to left, var(--panel) 40%, rgba(33, 26, 56, 0)) right center / 36px 100% no-repeat local,
+    radial-gradient(farthest-side at 100% 50%, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0)) right center / 14px 100% no-repeat scroll;
+}
+
+.sm {
+  display: none;
+}
+
+td.detail {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  min-width: 7em;
 }
 
 table {
@@ -773,6 +799,25 @@ tr:last-child td {
   padding: 0 16px calc(20px + env(safe-area-inset-bottom, 0px));
   color: var(--muted);
   font: 11px var(--mono);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.logout-all button {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: var(--muted);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.logout-all button:hover {
+  color: var(--bad);
 }
 
 /* ---------- login ---------- */
@@ -879,6 +924,23 @@ tr:last-child td {
   }
   .top .sub {
     display: none;
+  }
+  .lg {
+    display: none;
+  }
+  .sm {
+    display: inline;
+  }
+  th,
+  td {
+    padding-left: 5px;
+    padding-right: 5px;
+  }
+  td {
+    font-size: 12px;
+  }
+  .tag {
+    padding: 1px 4px;
   }
 }
 

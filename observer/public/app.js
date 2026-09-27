@@ -2,7 +2,7 @@
 // jogo (apelidos, salas, países, detalhes) entra no DOM só como nó de texto (textContent).
 // @ts-check
 
-import { C, EVENT_LABELS, FORM_COLORS, FORM_NAMES, PHASES, feedItem, flag, fmtClockDur, fmtDur, fmtNum, fmtTime, h, setText } from './view.js';
+import { C, EVENT_LABELS, FORM_COLORS, FORM_NAMES, PHASES, SECURITY_LABELS, feedItem, flag, fmtClockDur, fmtDur, fmtNum, fmtTime, h, lookup, setText } from './view.js';
 
 /** @typedef {import('./view.js').Ev} Ev */
 
@@ -104,6 +104,36 @@ function traceLine(ctx, ts, vs, X, Y, gapMs, color, baseY, fill) {
   }
 }
 
+/** Intervalo entre marcas do eixo X. @param {number} span @param {number} maxTicks */
+function timeStep(span, maxTicks) {
+  const steps = [1, 2, 5, 10, 15, 30, 60, 120, 180, 240, 360, 720].map((m) => m * 60_000);
+  return steps.find((st) => span / st <= maxTicks) ?? steps[steps.length - 1];
+}
+
+/**
+ * Sombreia os trechos sem dado: vermelho onde o observador coletou mas o jogo estava fora do ar
+ * (online = null) e cinza onde nem o observador coletou (buraco no tempo).
+ * @param {CanvasRenderingContext2D} ctx @param {any} s
+ * @param {(t:number)=>number} X @param {number} top @param {number} bottom @param {number} right
+ */
+function shadeGaps(ctx, s, X, top, bottom, right) {
+  const half = s.stepMs / 2;
+  const gapMs = Math.max(s.stepMs * 3, 20_000);
+  const clampX = (/** @type {number} */ t) => Math.min(right, Math.max(X(s.from), X(t)));
+  for (let i = 0; i < s.t.length; i++) {
+    if (i > 0 && s.t[i] - s.t[i - 1] > gapMs) {
+      ctx.fillStyle = C.gapFill;
+      const x0 = clampX(s.t[i - 1] + half);
+      ctx.fillRect(x0, top, clampX(s.t[i] - half) - x0, bottom - top);
+    }
+    if (s.fields.online[i] === null) {
+      ctx.fillStyle = C.downFill;
+      const x0 = clampX(s.t[i] - half);
+      ctx.fillRect(x0, top, clampX(s.t[i] + half) - x0, bottom - top);
+    }
+  }
+}
+
 /** @type {{ from: number, to: number, left: number, right: number, series: any } | null} */
 let chartGeom = null;
 /** @type {number | null} */
@@ -139,16 +169,26 @@ function drawMainChart() {
   }
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
-  const ticks = w < 420 ? 3 : 6;
-  for (let i = 0; i <= ticks; i++) {
-    const t = from + ((to - from) / ticks) * i;
+  // Marcas do eixo X em horários redondos (múltiplos de 5/10/15/30 min, 1/2/3/4/6 h, no fuso local).
+  const step = timeStep(to - from, w < 420 ? 3 : 6);
+  const off = new Date(from).getTimezoneOffset() * 60_000;
+  for (let t = Math.ceil((from - off) / step) * step + off; t <= to; t += step) {
     const x = X(t);
-    ctx.fillText(fmtTime(t, false), Math.min(Math.max(x, pad.l + 14), w - pad.r - 14), hgt - pad.b + 6);
+    if (x < pad.l + 14 || x > w - pad.r - 14) continue;
+    ctx.fillText(fmtTime(t, false), x, hgt - pad.b + 6);
+    ctx.beginPath();
+    ctx.moveTo(Math.round(x) + 0.5, hgt - pad.b);
+    ctx.lineTo(Math.round(x) + 0.5, hgt - pad.b + 3);
+    ctx.stroke();
   }
-  if (!s || !s.t.length) {
+  const hasData = !!s && s.fields.online.some((/** @type {number | null} */ v) => v !== null);
+  if (s) shadeGaps(ctx, s, X, pad.t, hgt - pad.b, w - pad.r);
+  if (!s || !hasData) {
+    ctx.fillStyle = C.muted;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('sem dados neste intervalo', (pad.l + w - pad.r) / 2, (pad.t + hgt - pad.b) / 2);
+    const msg = s && s.t.length ? 'jogo fora do ar neste intervalo' : 'sem dados neste intervalo';
+    ctx.fillText(msg, (pad.l + w - pad.r) / 2, (pad.t + hgt - pad.b) / 2);
     return;
   }
   const gap = Math.max(s.stepMs * 3, 20_000);
@@ -280,6 +320,11 @@ function renderStatus() {
     setStatusClass(pb, '');
     setText($('st-public-v'), 'aguardando');
     setText($('st-public-h'), p.url);
+  } else if (p.ok && g.status === 'down' && p.checkedAt < g.since) {
+    // O /health público passa pelo jogo: um OK de antes da queda já não diz nada.
+    setStatusClass(pb, '');
+    setText($('st-public-v'), 'rechecando…');
+    setText($('st-public-h'), `último OK há ${fmtDur(now - p.checkedAt)}, antes da queda`);
   } else if (p.ok) {
     setStatusClass(pb, 'good');
     setText($('st-public-v'), `OK · ${p.latencyMs} ms`);
@@ -336,8 +381,12 @@ function renderRooms() {
         'tr',
         null,
         h('td', { class: 'code' }, r.code),
-        h('td', null, h('span', { class: r.private ? 'tag priv' : 'tag' }, r.private ? 'privada' : 'pública')),
-        h('td', { class: `phase-${phase}` }, PHASES[phase] ?? phase),
+        h(
+          'td',
+          null,
+          h('span', { class: r.private ? 'tag priv' : 'tag' }, h('span', { class: 'lg' }, r.private ? 'privada' : 'pública'), h('span', { class: 'sm' }, r.private ? 'priv' : 'púb')),
+        ),
+        h('td', { class: `phase-${phase}` }, lookup(PHASES, phase) ?? phase),
         h('td', { class: 'r' }, fmtClockDur(r.elapsedMs)),
         h('td', { class: 'r' }, r.humans),
         h('td', { class: 'r' }, r.bots),
@@ -346,7 +395,8 @@ function renderRooms() {
     }),
   );
   $('rooms-empty').hidden = sorted.length > 0;
-  setText($('rooms-count'), rooms.length ? `${rooms.length} sala(s)` : '');
+  const active = rooms.filter((r) => r.humans > 0).length;
+  setText($('rooms-count'), rooms.length ? `${rooms.length} aberta(s) · ${active} com humanos` : '');
 }
 
 /**
@@ -381,10 +431,13 @@ function renderToday() {
   setText($('t-avg'), t.avgDurationMs === null ? '—' : fmtClockDur(t.avgDurationMs));
   $('t-peak').replaceChildren(h('span', null, fmtNum(t.peakOnline)), t.peakAt ? h('span', { class: 'unit' }, ` às ${fmtTime(t.peakAt, false)}`) : '');
   setText($('t-joins'), fmtNum(t.joins));
-  const entries = /** @type {[string, number][]} */ (Object.entries(t.winnersByForm)).sort((a, b) => b[1] - a[1]);
+  const winners = t.winnersByForm && typeof t.winnersByForm === 'object' ? t.winnersByForm : {};
+  const entries = /** @type {[string, number][]} */ (Object.entries(winners))
+    .filter((e) => typeof e[1] === 'number')
+    .sort((a, b) => b[1] - a[1]);
   const box = $('t-forms');
   if (!entries.length) box.replaceChildren(h('p', { class: 'empty' }, 'Nenhuma partida terminada hoje.'));
-  else renderBars(box, entries, (k) => FORM_NAMES[k] ?? k, (k) => FORM_COLORS[k] ?? '#5d5480');
+  else renderBars(box, entries, (k) => lookup(FORM_NAMES, k) ?? k, (k) => lookup(FORM_COLORS, k) ?? '#5d5480');
 }
 
 function renderBreakdown() {
@@ -453,17 +506,30 @@ function renderFeed() {
   else feed.replaceChildren(...list.map((e) => feedItem(e, false)));
 }
 
-/** @param {Ev[]} evs mais antigos primeiro */
+/** Mais recente primeiro, pelo horário do evento (o id desempata). @param {Ev} a @param {Ev} b */
+const byTimeDesc = (a, b) => b.t - a.t || b.id - a.id;
+
+/** @param {Ev[]} evs */
 function addEvents(evs) {
   if (!evs.length) return;
   const known = new Set(state.events.slice(0, 300).map((e) => e.id));
-  const fresh = evs.filter((e) => !known.has(e.id));
+  const fresh = evs.filter((e) => !known.has(e.id)).sort(byTimeDesc);
   if (!fresh.length) return;
-  state.events = [...fresh.reverse(), ...state.events].slice(0, 500);
+  // Eventos podem chegar com horário anterior ao do topo do feed (ex.: o jogo voltou antes de o
+  // observador perceber). Nesse caso reordena tudo em vez de só empilhar em cima.
+  const top = state.events[0];
+  const inOrder = !top || fresh[fresh.length - 1].t >= top.t;
+  state.events = [...fresh, ...state.events];
+  if (!inOrder) state.events.sort(byTimeDesc);
+  state.events = state.events.slice(0, 500);
   const sec = fresh.filter((e) => e.type === 'security');
   if (sec.length) {
-    state.security = [...sec, ...state.security].slice(0, 20);
+    state.security = [...sec, ...state.security].sort(byTimeDesc).slice(0, 20);
     renderSecurityTable();
+  }
+  if (!inOrder) {
+    renderFeed();
+    return;
   }
   const feed = $('feed');
   const visible = fresh.filter((e) => !state.hidden.has(e.type));
@@ -533,13 +599,15 @@ function renderPhone() {
   } else setTile(disk, '—', '', 'ilegível');
 
   const o = s.observer;
-  const priv = o.privateMB ?? o.rssMB;
+  // PSS: RSS com as páginas do binário do Node divididas com o jogo (o custo real no celular).
+  const own = o.pssMB ?? o.privateMB ?? o.rssMB;
+  const kind = o.pssMB !== null ? 'PSS' : o.privateMB !== null ? 'privada' : 'RSS';
   setTile(
     self,
-    fmtNum(priv, 1),
+    fmtNum(own, 1),
     'MB',
-    `${o.privateMB !== null ? `privada (RSS ${fmtNum(o.rssMB)} MB)` : 'RSS'} · CPU ${fmtNum(o.cpuPct, 2)}% · ${o.sseClients} painel(is) · no ar há ${fmtDur(o.uptimeMs)}`,
-    priv > 30 ? 'warn' : '',
+    `${kind}${kind !== 'RSS' ? ` (RSS ${fmtNum(o.rssMB)} MB)` : ''} · CPU ${fmtNum(o.cpuPct, 2)}% · ${o.sseClients} painel(is) · no ar há ${fmtDur(o.uptimeMs)}`,
+    own > 30 ? 'warn' : '',
   );
 }
 
@@ -563,9 +631,9 @@ function renderSecurityTable() {
         'tr',
         null,
         h('td', { title: new Date(e.t).toLocaleString('pt-BR') }, fmtTime(e.t)),
-        h('td', null, String(e.data.kind ?? '?')),
+        h('td', { title: String(e.data.kind ?? '') }, lookup(SECURITY_LABELS, e.data.kind) ?? String(e.data.kind ?? '?')),
         h('td', null, String(e.data.ipHash ?? '?')),
-        h('td', null, String(e.data.detail ?? '')),
+        h('td', { class: 'detail' }, String(e.data.detail ?? '')),
       ),
     ),
   );
@@ -632,9 +700,22 @@ function applySummary(summary) {
   renderAll();
 }
 
+/** @type {EventSource | null} */
+let stream = null;
+let retryTimer = 0;
+let backoffMs = 3_000;
+
 function connect() {
   const live = $('live');
+  clearTimeout(retryTimer);
+  stream?.close();
   const es = new EventSource('/api/stream');
+  stream = es;
+  es.addEventListener('bye', () => {
+    // Sessão encerrada no servidor (sair, "sair de todos" ou expirou).
+    es.close();
+    location.href = '/login';
+  });
   es.addEventListener('hello', (msg) => {
     const data = JSON.parse(/** @type {MessageEvent} */ (msg).data);
     state.events = [];
@@ -648,14 +729,24 @@ function connect() {
     addEvents(data.events);
   });
   es.onopen = () => {
+    backoffMs = 3_000;
     live.className = 'live on';
     setText(live, 'ao vivo');
   };
   es.onerror = () => {
+    if (stream !== es) return;
     live.className = 'live off';
     setText(live, 'reconectando…');
     // Se a sessão expirou, o EventSource não mostra o 401: confere pela API.
     getJSON('/api/summary').catch(() => {});
+    // Com resposta HTTP de erro (502/530 da Cloudflare durante um deploy, 503 de painéis demais)
+    // o EventSource desiste para sempre (CLOSED). Reabre por conta própria, com espera crescente.
+    if (es.readyState === EventSource.CLOSED) {
+      es.close();
+      stream = null;
+      retryTimer = window.setTimeout(connect, backoffMs + Math.random() * 1_000);
+      backoffMs = Math.min(backoffMs * 2, 60_000);
+    }
   };
 }
 

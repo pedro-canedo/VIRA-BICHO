@@ -17,7 +17,14 @@ export interface PhoneMetrics {
    * O próprio observador. privateMB (RssAnon) é o custo real: o resto do RSS são páginas do
    * binário do Node, compartilhadas com o processo do jogo.
    */
-  self: { rssMB: number; privateMB: number | null; heapUsedMB: number; cpuPct: number };
+  self: {
+    rssMB: number;
+    privateMB: number | null;
+    /** PSS (/proc/self/smaps_rollup): RSS com as páginas compartilhadas divididas entre os processos. */
+    pssMB: number | null;
+    heapUsedMB: number;
+    cpuPct: number;
+  };
 }
 
 async function readText(path: string): Promise<string | null> {
@@ -61,25 +68,62 @@ export function normalizeTemp(raw: number | null): number | null {
   return c > -30 && c < 150 ? Math.round(c * 10) / 10 : null;
 }
 
-async function readThermal(sysRoot: string): Promise<{ tempC: number | null; zone: string | null }> {
-  const base = join(sysRoot, 'class', 'thermal');
-  let entries: string[];
-  try {
-    entries = (await readdir(base)).filter((e) => e.startsWith('thermal_zone'));
-  } catch {
-    return { tempC: null, zone: null };
-  }
-  let best: number | null = null;
-  let zone: string | null = null;
-  for (const e of entries.slice(0, 64)) {
-    const t = normalizeTemp(num(await readText(join(base, e, 'temp'))));
-    if (t === null || t <= 0) continue; // zonas desligadas costumam reportar 0
-    if (best === null || t > best) {
-      best = t;
-      zone = (await readText(join(base, e, 'type'))) ?? e;
+interface Zone {
+  dir: string;
+  type: string;
+}
+
+/**
+ * Temperatura: maior leitura entre as thermal zones. A varredura do diretório (até 64 zonas, e no
+ * Android algumas são lentas) só acontece de hora em hora; no meio tempo lê apenas as zonas que
+ * deram leitura válida na última varredura, em paralelo.
+ */
+class ThermalReader {
+  private zones: Zone[] | null = null;
+  private scannedAt = 0;
+
+  constructor(
+    private readonly sysRoot: string,
+    private readonly rescanMs = 3600_000,
+  ) {}
+
+  private async scan(): Promise<Zone[]> {
+    const base = join(this.sysRoot, 'class', 'thermal');
+    let entries: string[];
+    try {
+      entries = (await readdir(base)).filter((e) => e.startsWith('thermal_zone')).slice(0, 64);
+    } catch {
+      return [];
     }
+    const found = await Promise.all(
+      entries.map(async (e) => {
+        const dir = join(base, e);
+        const t = normalizeTemp(num(await readText(join(dir, 'temp'))));
+        if (t === null || t <= 0) return null; // zonas desligadas costumam reportar 0
+        return { dir, type: ((await readText(join(dir, 'type'))) ?? e).slice(0, 40) };
+      }),
+    );
+    return found.filter((z): z is Zone => z !== null);
   }
-  return { tempC: best, zone };
+
+  async read(): Promise<{ tempC: number | null; zone: string | null }> {
+    const now = Date.now();
+    if (!this.zones || now - this.scannedAt >= this.rescanMs) {
+      this.zones = await this.scan();
+      this.scannedAt = now;
+    }
+    const temps = await Promise.all(this.zones.map(async (z) => normalizeTemp(num(await readText(join(z.dir, 'temp'))))));
+    let best: number | null = null;
+    let zone: string | null = null;
+    temps.forEach((t, i) => {
+      if (t === null || t <= 0) return;
+      if (best === null || t > best) {
+        best = t;
+        zone = this.zones![i].type;
+      }
+    });
+    return { tempC: best, zone };
+  }
 }
 
 async function readBattery(sysRoot: string): Promise<PhoneMetrics['battery']> {
@@ -135,20 +179,25 @@ export interface PhoneReaderOptions {
 
 export class PhoneReader {
   private cpu = new SelfCpu();
-  constructor(private readonly opts: PhoneReaderOptions) {}
+  private readonly thermal: ThermalReader;
+  constructor(private readonly opts: PhoneReaderOptions) {
+    this.thermal = new ThermalReader(opts.sysRoot);
+  }
 
   async read(): Promise<PhoneMetrics> {
     const { procRoot, sysRoot, diskPath } = this.opts;
-    const [loadS, memS, upS, thermal, battery, disk, selfStatus] = await Promise.all([
+    const [loadS, memS, upS, thermal, battery, disk, selfStatus, rollup] = await Promise.all([
       readText(join(procRoot, 'loadavg')),
       readText(join(procRoot, 'meminfo')),
       readText(join(procRoot, 'uptime')),
-      readThermal(sysRoot),
+      this.thermal.read(),
       readBattery(sysRoot),
       readDisk(diskPath),
       readText('/proc/self/status'),
+      readText('/proc/self/smaps_rollup'),
     ]);
     const anon = selfStatus ? /^RssAnon:\s+(\d+)/m.exec(selfStatus) : null;
+    const pss = rollup ? /^Pss:\s+(\d+)/m.exec(rollup) : null;
     const mem = process.memoryUsage();
     const up = upS ? num(upS.split(/\s+/)[0]) : null;
     return {
@@ -163,6 +212,7 @@ export class PhoneReader {
       self: {
         rssMB: Math.round((mem.rss / 1048576) * 10) / 10,
         privateMB: anon ? Math.round((Number(anon[1]) / 1024) * 10) / 10 : null,
+        pssMB: pss ? Math.round((Number(pss[1]) / 1024) * 10) / 10 : null,
         heapUsedMB: Math.round((mem.heapUsed / 1048576) * 10) / 10,
         cpuPct: this.cpu.read(),
       },

@@ -26,8 +26,18 @@ gen_secret() {
 [ -f "$SECRETS" ] || : > "$SECRETS"
 chmod 600 "$SECRETS"
 for key in OBS_TOKEN OBS_INTERNAL_TOKEN; do
-  if ! grep -q "^$key=" "$SECRETS"; then
-    printf '%s=%s\n' "$key" "$(gen_secret)" >> "$SECRETS"
+  # Regera também se a linha existir mas estiver vazia ou curta (ex.: uma geração que falhou antes).
+  if ! grep -q "^$key=.\{16,\}" "$SECRETS"; then
+    val="$(gen_secret)" || val=""
+    if ! printf '%s' "$val" | grep -q '^[0-9a-f]\{64\}$'; then
+      echo "Falha ao gerar $key (instale openssl ou verifique /dev/urandom); nada foi gravado." >&2
+      exit 1
+    fi
+    # Troca a linha antiga (se houver) sem nunca imprimir o valor.
+    { grep -v "^$key=" "$SECRETS" || true; printf '%s=%s\n' "$key" "$val"; } > "$SECRETS.tmp"
+    mv "$SECRETS.tmp" "$SECRETS"
+    chmod 600 "$SECRETS"
+    unset val
     echo "Gerado $key em $SECRETS"
   fi
 done
@@ -40,12 +50,14 @@ mkdir -p "$SV/log"
 cat > "$SV/run" <<'RUN'
 #!/data/data/com.termux/files/usr/bin/sh
 cd "$HOME/apps/vira-bicho"
-# OBS_INTERNAL_TOKEN: segredo do endpoint interno lido pelo observador.
-if [ -f "$HOME/.config/vira-bicho/secrets.env" ]; then
-  set -a
-  . "$HOME/.config/vira-bicho/secrets.env"
-  set +a
+# Só o OBS_INTERNAL_TOKEN (segredo do endpoint interno lido pelo observador). O OBS_TOKEN, senha do
+# painel, fica fora do ambiente do jogo, que é o processo exposto à internet.
+F="$HOME/.config/vira-bicho/secrets.env"
+if [ -f "$F" ]; then
+  OBS_INTERNAL_TOKEN=$(sed -n 's/^OBS_INTERNAL_TOKEN=//p' "$F" | tail -n 1)
+  export OBS_INTERNAL_TOKEN
 fi
+unset F
 export PORT=3000 NODE_ENV=production
 exec node server.mjs 2>&1
 RUN
@@ -63,6 +75,7 @@ mkdir -p "$SVO/log"
 cat > "$SVO/run" <<'RUN'
 #!/data/data/com.termux/files/usr/bin/sh
 cd "$HOME/apps/vira-bicho-obs"
+# OBS_TOKEN e OBS_INTERNAL_TOKEN (e, se quiser, OBS_HOST=127.0.0.1 para aceitar só o túnel).
 set -a
 . "$HOME/.config/vira-bicho/secrets.env"
 set +a

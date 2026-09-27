@@ -5,11 +5,11 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Sessions, clientIp, isHttps } from '../observer/src/auth';
+import { LoginGuard, Sessions, clientIp, isDirectLocal, isHttps, rateKey } from '../observer/src/auth';
 import { loadConfig } from '../observer/src/config';
 import { escapeLabel } from '../observer/src/metrics';
 import { Observer } from '../observer/src/observer';
-import { createObsServer, type ObsServer } from '../observer/src/server';
+import { createObsServer, sameOrigin, type ObsServer } from '../observer/src/server';
 import { startFakeGame, type FakeGame } from './helpers/fake-game';
 
 const TOKEN = 'painel-'.padEnd(40, 'x');
@@ -56,7 +56,8 @@ beforeAll(async () => {
   game.emit('security', { kind: 'rate_limit', ipHash: 'a1b2c3d4', detail: 'ws flood' });
   await obs.pollGame();
   await obs.sample();
-  srv = createObsServer(obs, { token: TOKEN, publicDir: cfg.publicDir, heartbeatMs: 50 });
+  // Limite global alto aqui: os testes somam muitas falhas de propósito (o global tem teste próprio).
+  srv = createObsServer(obs, { token: TOKEN, publicDir: cfg.publicDir, heartbeatMs: 50, loginGlobalPerMinute: 10_000 });
   await new Promise<void>((r) => srv.server.listen(0, '127.0.0.1', () => r()));
   base = `http://127.0.0.1:${(srv.server.address() as AddressInfo).port}`;
 });
@@ -81,7 +82,7 @@ describe('rotas públicas e cabeçalhos', () => {
       const res = await fetch(`${base}${path}`);
       expect(res.headers.get('x-frame-options')).toBe('DENY');
       expect(res.headers.get('x-content-type-options')).toBe('nosniff');
-      expect(res.headers.get('referrer-policy')).toBe('no-referrer');
+      expect(res.headers.get('referrer-policy')).toBe('same-origin');
       const csp = res.headers.get('content-security-policy')!;
       expect(csp).toContain("script-src 'self'");
       expect(csp).toContain("frame-ancestors 'none'");
@@ -217,6 +218,197 @@ describe('autenticação', () => {
     expect(clientIp(req('127.0.0.1', { 'cf-connecting-ip': '<script>' }))).toBe('127.0.0.1');
     expect(isHttps(req('127.0.0.1', { 'x-forwarded-proto': 'https' }))).toBe(true);
     expect(isHttps(req('127.0.0.1'))).toBe(false);
+  });
+});
+
+/** POST de formulário como um navegador manda (Origin e Sec-Fetch-Site). */
+function formPost(path: string, body: string, headers: Record<string, string> = {}) {
+  return fetch(`${base}${path}`, {
+    method: 'POST',
+    redirect: 'manual',
+    headers: { 'content-type': 'application/x-www-form-urlencoded', 'cf-connecting-ip': freshIp(), ...headers },
+    body,
+  });
+}
+
+describe('login e logout pelo navegador (CSRF)', () => {
+  it('aceita Origin: null quando Sec-Fetch-Site é same-origin (Chrome com referrer no-referrer)', async () => {
+    const res = await formPost('/login', `token=${TOKEN}`, { origin: 'null', 'sec-fetch-site': 'same-origin' });
+    expect(res.status).toBe(303);
+    const c = res.headers.get('set-cookie')!.split(';')[0];
+    const out = await formPost('/logout', '', { origin: 'null', 'sec-fetch-site': 'same-origin', cookie: c });
+    expect(out.status).toBe(303);
+    expect(out.headers.get('location')).toBe('/login');
+  });
+
+  it('aceita o Origin real igual ao Host', async () => {
+    const host = new URL(base).host;
+    expect((await formPost('/login', `token=${TOKEN}`, { origin: `http://${host}`, 'sec-fetch-site': 'same-origin' })).status).toBe(303);
+  });
+
+  it('recusa Origin: null sem Sec-Fetch-Site, e qualquer POST cross-site ou same-site', async () => {
+    expect((await formPost('/login', `token=${TOKEN}`, { origin: 'null' })).status).toBe(403);
+    expect((await formPost('/login', `token=${TOKEN}`, { origin: 'null', 'sec-fetch-site': 'cross-site' })).status).toBe(403);
+    // Subdomínio irmão (outro serviço em *.caixazen.online): same-site não basta.
+    expect((await formPost('/login', `token=${TOKEN}`, { 'sec-fetch-site': 'same-site' })).status).toBe(403);
+    expect((await formPost('/logout', '', { 'sec-fetch-site': 'cross-site' })).status).toBe(403);
+  });
+
+  it('sameOrigin(): tabela de casos', () => {
+    const req = (headers: Record<string, string>) => ({ headers: { host: 'obs.example', ...headers } }) as unknown as IncomingMessage;
+    expect(sameOrigin(req({}))).toBe(true); // curl
+    expect(sameOrigin(req({ origin: 'https://obs.example' }))).toBe(true);
+    expect(sameOrigin(req({ origin: 'https://obs.example', 'sec-fetch-site': 'same-origin' }))).toBe(true);
+    expect(sameOrigin(req({ origin: 'null', 'sec-fetch-site': 'same-origin' }))).toBe(true);
+    expect(sameOrigin(req({ origin: 'null' }))).toBe(false);
+    expect(sameOrigin(req({ origin: 'https://evil.example' }))).toBe(false);
+    expect(sameOrigin(req({ origin: 'https://obs.example', 'sec-fetch-site': 'cross-site' }))).toBe(false);
+    expect(sameOrigin(req({ 'sec-fetch-site': 'none' }))).toBe(false);
+  });
+});
+
+describe('sessões revogáveis', () => {
+  it('depois do logout o mesmo cookie deixa de valer no servidor', async () => {
+    const c = await cookie();
+    expect((await fetch(`${base}/api/summary`, { headers: { cookie: c } })).status).toBe(200);
+    expect((await formPost('/logout', '', { cookie: c })).status).toBe(303);
+    expect((await fetch(`${base}/api/summary`, { headers: { cookie: c } })).status).toBe(401);
+    // Outra sessão continua valendo.
+    const other = await cookie();
+    expect((await fetch(`${base}/api/summary`, { headers: { cookie: other } })).status).toBe(200);
+  });
+
+  it('"sair de todos os aparelhos" invalida todas as sessões; sem sessão não faz nada', async () => {
+    const a = await cookie();
+    const b = await cookie();
+    const epoch = srv.sessions.currentEpoch;
+    // Sem cookie válido, all=1 não derruba ninguém.
+    expect((await formPost('/logout', 'all=1')).status).toBe(303);
+    expect(srv.sessions.currentEpoch).toBe(epoch);
+    expect((await formPost('/logout', 'all=1', { cookie: a })).status).toBe(303);
+    expect(srv.sessions.currentEpoch).toBe(epoch + 1);
+    for (const c of [a, b]) expect((await fetch(`${base}/api/summary`, { headers: { cookie: c } })).status).toBe(401);
+    expect((await fetch(`${base}/api/summary`, { headers: { cookie: await cookie() } })).status).toBe(200);
+  });
+
+  it('o logout fecha o stream SSE daquela sessão com um evento "bye"', async () => {
+    const c = await cookie();
+    const req = http.get(`${base}/api/stream`, { headers: { cookie: c } });
+    const res = await new Promise<IncomingMessage>((r) => req.on('response', r));
+    let text = '';
+    res.on('data', (d: Buffer) => (text += d.toString('utf8')));
+    const ended = new Promise<void>((r) => res.on('end', () => r()));
+    await formPost('/logout', '', { cookie: c });
+    await ended;
+    expect(text).toContain('event: bye');
+  });
+
+  it('revogações e epoch sobrevivem a reinícios (sessions.json)', () => {
+    const file = join(dir, 'sessions.json');
+    const s1 = new Sessions('k'.repeat(32), file);
+    const now = Date.now();
+    const v1 = s1.issue(now);
+    const v2 = s1.issue(now);
+    s1.revoke(s1.check(v1, now)!, now);
+    const s2 = new Sessions('k'.repeat(32), file);
+    expect(s2.verify(v1, now)).toBe(false);
+    expect(s2.verify(v2, now)).toBe(true);
+    s2.revokeAll();
+    expect(new Sessions('k'.repeat(32), file).verify(v2, now)).toBe(false);
+  });
+});
+
+describe('cookie de sessão', () => {
+  it('assinatura só na forma canônica: sufixos, base64 padrão e variações do último caractere são recusados', () => {
+    const s = new Sessions('c'.repeat(32));
+    const now = Date.now();
+    const v = s.issue(now);
+    expect(s.verify(v, now)).toBe(true);
+    const sig = v.slice(v.lastIndexOf('.') + 1);
+    expect(sig).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    const head = v.slice(0, v.lastIndexOf('.') + 1);
+    const std = sig.replace(/-/g, '+').replace(/_/g, '/');
+    const variants = [`${v}==`, `${v}!!`, `${v}=`, head + std + (std === sig ? '=' : '')];
+    // O último caractere de 43 em base64 carrega 2 bits sobrando: as outras 3 letras decodificam igual.
+    const last = sig.at(-1)!;
+    const alpha = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    const i = alpha.indexOf(last);
+    for (let k = 1; k < 4; k++) variants.push(head + sig.slice(0, -1) + alpha[(i & ~3) | ((i + k) & 3)]);
+    for (const bad of variants) expect(s.verify(bad, now), bad).toBe(false);
+  });
+
+  it('em HTTPS usa o prefixo __Host- (Secure, Path=/, sem Domain)', async () => {
+    const res = await login(freshIp(), { 'x-forwarded-proto': 'https' });
+    const set = res.headers.get('set-cookie')!;
+    expect(set).toMatch(/^__Host-vbobs=[\w.-]+;/);
+    expect(set).toContain('Secure');
+    expect(set).toContain('Path=/');
+    expect(set).not.toMatch(/Domain=/i);
+    const c = set.split(';')[0];
+    expect((await fetch(`${base}/api/summary`, { headers: { cookie: c } })).status).toBe(200);
+  });
+
+  it('cookie duplicado plantado por outro subdomínio não derruba a sessão', async () => {
+    const c = await cookie();
+    const value = c.split('=').slice(1).join('=');
+    for (const header of [`${c}; vbobs=bad`, `vbobs=bad; ${c}`, `__Host-vbobs=${value}; vbobs=lixo`]) {
+      expect((await fetch(`${base}/api/summary`, { headers: { cookie: header } })).status, header).toBe(200);
+    }
+  });
+});
+
+describe('limite de tentativas', () => {
+  it('login certo não consome o limite', async () => {
+    const ip = freshIp();
+    for (let i = 0; i < 8; i++) expect((await login(ip)).status).toBe(303);
+  });
+
+  it('IPv6 conta por /64: trocar o endereço dentro do mesmo prefixo não contorna o limite', async () => {
+    for (let i = 1; i <= 5; i++) {
+      const r = await formPost('/login', 'token=chute', { 'cf-connecting-ip': `2001:db8:7:7::${i}` });
+      expect(r.status).toBe(401);
+    }
+    expect((await formPost('/login', 'token=chute', { 'cf-connecting-ip': '2001:db8:7:7:ffff::99' })).status).toBe(429);
+    // Outro /64 segue livre.
+    expect((await formPost('/login', `token=${TOKEN}`, { 'cf-connecting-ip': '2001:db8:7:8::1' })).status).toBe(303);
+  });
+
+  it('rateKey(): IPv6 agrupado por /64, IPv4 (inclusive mapeado) por endereço', () => {
+    expect(rateKey('2001:db8::1')).toBe('2001:db8:0:0::/64');
+    expect(rateKey('2001:db8:0:0:ffff::2')).toBe('2001:db8:0:0::/64');
+    expect(rateKey('2001:DB8:1:2:3:4:5:6')).toBe('2001:db8:1:2::/64');
+    expect(rateKey('::ffff:203.0.113.9')).toBe('203.0.113.9');
+    expect(rateKey('203.0.113.9')).toBe('203.0.113.9');
+    expect(rateKey('lixo')).toBe('lixo');
+  });
+
+  it('limite global de falhas: muitos endereços diferentes também param', () => {
+    const g = new LoginGuard(5, 30);
+    const now = 1_000_000;
+    for (let i = 0; i < 30; i++) g.fail(`198.18.${i >> 8}.${i & 255}`, now);
+    expect(g.blockedFor('192.0.2.200', now)).toBeGreaterThan(0);
+    expect(g.blockedFor('192.0.2.200', now + 61_000)).toBe(0);
+    // Só falhas criam chaves: o mapa não cresce com tráfego legítimo.
+    expect(g.perKey.size).toBe(30);
+  });
+
+  it('Bearer certo de um processo no próprio celular (loopback sem proxy) não fica preso no bloqueio', async () => {
+    for (let i = 0; i < 5; i++) {
+      expect((await fetch(`${base}/metrics`, { headers: { authorization: `Bearer chute${i}` } })).status).toBe(401);
+    }
+    expect((await fetch(`${base}/metrics`, { headers: { authorization: 'Bearer chute-de-novo' } })).status).toBe(429);
+    expect((await fetch(`${base}/metrics`, { headers: { authorization: `Bearer ${TOKEN}` } })).status).toBe(200);
+  });
+
+  it('isDirectLocal(): só loopback sem cabeçalhos de proxy', () => {
+    const req = (remote: string, headers: Record<string, string> = {}) =>
+      ({ socket: { remoteAddress: remote }, headers }) as unknown as IncomingMessage;
+    expect(isDirectLocal(req('127.0.0.1'))).toBe(true);
+    expect(isDirectLocal(req('::1'))).toBe(true);
+    expect(isDirectLocal(req('127.0.0.1', { 'cf-connecting-ip': '1.2.3.4' }))).toBe(false);
+    expect(isDirectLocal(req('127.0.0.1', { 'cf-ray': 'abc' }))).toBe(false);
+    expect(isDirectLocal(req('127.0.0.1', { 'x-forwarded-for': '1.2.3.4' }))).toBe(false);
+    expect(isDirectLocal(req('192.168.3.50'))).toBe(false);
   });
 });
 
