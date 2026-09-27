@@ -157,7 +157,8 @@ input.field:focus {
 
 .logo {
   font-family: var(--pixel);
-  font-size: clamp(20px, 6.8vw, 40px);
+  font-size: clamp(20px, 6.8vw, 36px);
+  white-space: nowrap;
   line-height: 1.2;
   text-align: center;
   margin: 8px 0 0;
