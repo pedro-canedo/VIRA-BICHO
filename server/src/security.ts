@@ -103,7 +103,7 @@ export const SECURITY: SecurityConfig = {
   lobby: {
     maxRooms: BALANCE.lobby.maxRooms,
     helloPerConn: { capacity: 3, refillPerSec: 1 / 3 },
-    roomCreate: { capacity: 4, refillPerSec: 1 / 150 },
+    roomCreate: { capacity: 8, refillPerSec: 1 / 60 },
     maxRoomsPerIp: 2,
     maxQuickRoomsPerIp: 3,
     maxRoomsPerNet: 4,

@@ -27,7 +27,7 @@ export function showMenu(onPlay: (req: PlayRequest) => void, error = ''): void {
   const params = new URLSearchParams(location.search);
   const invite = (params.get('sala') ?? '').toUpperCase().slice(0, 4);
   const nameInput = h('input', { class: 'field', maxlength: 14, placeholder: 'Seu apelido', value: localStorage.getItem('vb.name') ?? '' }) as HTMLInputElement;
-  const codeInput = h('input', { class: 'field', maxlength: 4, placeholder: 'CÓDIGO', value: invite, style: 'text-transform:uppercase;text-align:center;letter-spacing:4px' }) as HTMLInputElement;
+  const codeInput = h('input', { class: 'field', maxlength: 4, placeholder: 'CÓDIGO', value: invite, style: 'text-transform:uppercase;text-align:center;letter-spacing:2px;min-width:7.5em' }) as HTMLInputElement;
   const err = h('div', { class: 'error' }, error);
   const preview = h('div', { class: 'preview' });
   const refresh = () => preview.replaceChildren(creatureImg(randomLook(), 3), creatureImg(randomLook(), 3), creatureImg(randomLook(), 3));
@@ -86,11 +86,42 @@ export interface LobbyHandlers {
   onLeave(): void;
 }
 
-let lobbyEl: HTMLElement | null = null;
+interface LobbyView {
+  code: string;
+  root: HTMLElement;
+  label: HTMLElement;
+  players: HTMLElement;
+  count: HTMLElement;
+  hint: HTMLElement;
+}
 
+let lobbyView: LobbyView | null = null;
+
+/**
+ * Sala de espera. A estrutura (e os botões) é montada uma vez por sala e depois só os textos
+ * mudam: recriar os botões a cada segundo fazia toques se perderem no celular.
+ */
 export function showLobby(msg: Extract<ServerMsg, { t: 'lobby' }>, handlers: LobbyHandlers): void {
-  const link = `${location.origin}/?sala=${msg.code}`;
+  if (!lobbyView || lobbyView.code !== msg.code || !lobbyView.root.isConnected) lobbyView = buildLobby(msg, handlers);
+  const v = lobbyView;
   const bots = Math.max(0, msg.min - msg.players.length);
+  v.label.textContent = `Jogadores (${msg.players.length}/${msg.max})`;
+  const chips = [...msg.players.map((n) => ['chip', n]), ...Array.from({ length: bots }, () => ['chip bot', '🤖 bot'])];
+  // Chips não são clicáveis: podem ser trocados sem risco para o toque.
+  if (v.players.dataset.sig !== JSON.stringify(chips)) {
+    v.players.dataset.sig = JSON.stringify(chips);
+    v.players.replaceChildren(...chips.map(([cls, text]) => h('span', { class: cls }, text)));
+  }
+  v.count.textContent = msg.startsIn === null ? '...' : `Começa em ${fmtTime(msg.startsIn)}`;
+  v.hint.textContent = bots ? `Se ninguém mais entrar, ${bots} bots completam a arena.` : 'Arena cheia de gente de verdade!';
+}
+
+function buildLobby(msg: Extract<ServerMsg, { t: 'lobby' }>, handlers: LobbyHandlers): LobbyView {
+  const link = `${location.origin}/?sala=${msg.code}`;
+  const label = h('div', { class: 'label' });
+  const players = h('div', { class: 'players' });
+  const count = h('div', { class: 'big-count' });
+  const hint = h('p', { class: 'muted small', style: 'margin:0;text-align:center' });
   const body = h(
     'div',
     { class: 'stack' },
@@ -124,18 +155,16 @@ export function showLobby(msg: Extract<ServerMsg, { t: 'lobby' }>, handlers: Lob
             ),
           )
         : null,
-      h('div', { class: 'label' }, `Jogadores (${msg.players.length}/${msg.max})`),
-      h('div', { class: 'players' }, ...msg.players.map((n) => h('span', { class: 'chip' }, n)), ...Array.from({ length: bots }, () => h('span', { class: 'chip bot' }, '🤖 bot'))),
-      h('div', { class: 'big-count' }, msg.startsIn === null ? '...' : `Começa em ${fmtTime(msg.startsIn)}`),
-      h('p', { class: 'muted small', style: 'margin:0;text-align:center' }, bots ? `Se ninguém mais entrar, ${bots} bots completam a arena.` : 'Arena cheia de gente de verdade!'),
+      label,
+      players,
+      count,
+      hint,
       h('button', { class: 'btn primary', onclick: handlers.onStartNow }, '⚡ Começar agora'),
       h('button', { class: 'btn ghost', onclick: handlers.onLeave }, 'Sair'),
     ),
     h('p', { class: 'tagline small' }, 'Dica: toque no chão para andar e toque num bicho para batalhar.'),
   );
-  if (!lobbyEl || !lobbyEl.isConnected) {
-    clearUi();
-    lobbyEl = mount(h('section', { class: 'screen' }));
-  }
-  lobbyEl.replaceChildren(body);
+  clearUi();
+  const root = mount(h('section', { class: 'screen' }, body));
+  return { code: msg.code, root, label, players, count, hint };
 }

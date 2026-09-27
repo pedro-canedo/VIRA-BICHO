@@ -34,6 +34,13 @@ body {
   overscroll-behavior: none;
   touch-action: manipulation;
   user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+input {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 #app,
@@ -400,6 +407,7 @@ input.field:focus {
 }
 
 .side {
+  pointer-events: none !important;
   position: fixed;
   top: calc(8px + var(--safe-t));
   right: 8px;

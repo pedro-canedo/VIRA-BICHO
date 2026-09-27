@@ -144,3 +144,27 @@ describe('timeouts do servidor', () => {
     expect(await within(closed, 1500)).not.toBe('timeout');
   });
 });
+
+describe('http:// pelo túnel', () => {
+  const viaTunnel = (host: string, scheme: 'http' | 'https') => ({ host, 'cf-connecting-ip': '203.0.113.9', 'cf-visitor': `{"scheme":"${scheme}"}` });
+
+  it('redireciona para https nos domínios do jogo, mantendo o caminho', async () => {
+    const { port } = await boot();
+    const r = await httpGet(port, '/?sala=ABCD', viaTunnel('batllebicho.caixazen.online', 'http'));
+    expect(r.status).toBe(308);
+    expect(r.headers.location).toBe('https://batllebicho.caixazen.online/?sala=ABCD');
+  });
+
+  it('não redireciona para hosts desconhecidos (sem open redirect)', async () => {
+    const { port } = await boot();
+    const r = await httpGet(port, '/', viaTunnel('site-malicioso.example', 'http'));
+    expect(r.status).toBe(200);
+    expect(r.headers.location).toBeUndefined();
+  });
+
+  it('https e acesso direto pela LAN seguem normais', async () => {
+    const { port } = await boot();
+    expect((await httpGet(port, '/', viaTunnel('batllebicho.caixazen.online', 'https'))).status).toBe(200);
+    expect((await httpGet(port, '/', { host: '192.168.3.22:3000' })).status).toBe(200);
+  });
+});
