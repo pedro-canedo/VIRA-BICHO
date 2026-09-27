@@ -1,6 +1,10 @@
 import {
   BALANCE,
   ELEMS,
+  FX_CHARGED,
+  FX_CLASH,
+  FX_KO,
+  FX_MAX_PER_TICK,
   MAX_STAGE,
   Rng,
   applyXp,
@@ -16,16 +20,19 @@ import {
   randomSeed,
   resolveTurn,
   speciesName,
+  typeMult,
   type Action,
   type BattleSnap,
   type Combatant,
   type EntSnap,
   type FighterInfo,
+  type FxEvent,
   type GameMap,
   type LeaderRow,
   type Look,
   type Phase,
   type ServerMsg,
+  type Snap,
   type Stage,
   type Vec,
 } from '@vb/shared';
@@ -76,6 +83,8 @@ export class Room {
   private nextCrownPingAt = 0;
   private crownPingUntil = 0;
   private lastCrownFeedAt = -Infinity;
+  /** Eventos visuais do tick, filtrados por visão em sendSnapshots. */
+  private readonly fxq: FxEvent[] = [];
 
   constructor(
     readonly code: string,
@@ -211,6 +220,10 @@ export class Room {
 
   // ---------------------------------------------------------------- helpers
 
+  private fx(ev: FxEvent): void {
+    if (this.fxq.length < FX_MAX_PER_TICK) this.fxq.push(ev);
+  }
+
   look(e: Entity): Look {
     if (e.kind === 'wild') return { form: e.elem, stage: 1, order: [e.elem] };
     return lookOf(e.points, e.stage);
@@ -266,6 +279,7 @@ export class Room {
     const gained = applyXp(p, amount);
     if (gained > 0) {
       p.hp = Math.max(1, Math.round(pct * maxHp(p.stage)));
+      this.fx({ k: 'v', x: p.x, y: p.y, id: p.id, s: p.stage });
       const name = speciesName(this.look(p).form, p.stage);
       this.toast(p, `Você evoluiu para ${name}!`, true);
       this.pushHistory(p, 'Evoluiu');
@@ -324,6 +338,7 @@ export class Room {
     }
     if (this.state !== 'play') return;
 
+    this.fxq.length = 0; // a fila começa vazia em todo tick de jogo
     this.updatePhase();
     for (const p of this.players.values()) {
       if (p.alive && p.bot && !p.battle && now >= p.bot.nextThinkAt) botThink(this, p, now);
@@ -527,6 +542,7 @@ export class Room {
       if (e.kind === 'player') e.target = null;
     }
     this.battles.set(bt.id, bt);
+    this.fx({ k: 'bt', x: bt.cx, y: bt.cy, id: bt.id, a: a.id, b: b.id, kd: kind === 'pvp' ? 'p' : kind === 'wild' ? 'w' : 'f' });
     const ms = this.choiceMs(bt);
     this.send(a, { t: 'b_start', id: bt.id, kind: bt.kind, you: this.fighterInfo(a, false), opp: this.fighterInfo(b, false), turn: 1, ms });
     if (b.kind === 'player') {
@@ -570,9 +586,13 @@ export class Room {
   }
 
   private resolve(bt: Battle): void {
+    const chA = bt.charged.a;
+    const chB = bt.charged.b;
     const ca = bt.choice.a ?? 'defesa';
     const cb = bt.choice.b ?? 'defesa';
     const r = resolveTurn(this.combatant(bt.a, bt.charged.a), this.combatant(bt.b, bt.charged.b), ca, cb);
+    const baseA = r.dmgToA;
+    const baseB = r.dmgToB;
     // Fúria da arena: no Duelo Final, depois de alguns turnos, os dois perdem HP a cada turno.
     const fury = bt.kind === 'final' && bt.turn >= BALANCE.duel.furyFromTurn;
     if (fury) {
@@ -582,6 +602,14 @@ export class Room {
     }
     bt.a.hp -= r.dmgToA;
     bt.b.hp -= r.dmgToB;
+    const hit = (att: Entity, def: Entity, v: number, act: Action, charged: boolean) => {
+      const tm = typeMult(this.look(att), this.look(def));
+      const fl = (charged ? FX_CHARGED : 0) | (r.winner === 'tie' ? FX_CLASH : 0) | (def.hp <= 0 ? FX_KO : 0);
+      this.fx({ k: 'h', x: bt.cx, y: bt.cy, bt: bt.id, a: att.id, d: def.id, v, act, m: tm > 1 ? 1 : tm < 1 ? -1 : 0, fl, hp: Math.max(0, Math.round(def.hp)) });
+    };
+    if (baseB > 0) hit(bt.a, bt.b, baseB, ca, chA);
+    if (baseA > 0) hit(bt.b, bt.a, baseA, cb, chB);
+    if (fury) this.fx({ k: 'fu', x: bt.cx, y: bt.cy, bt: bt.id, a: bt.a.id, b: bt.b.id, va: r.dmgToA - baseA, vb: r.dmgToB - baseB });
     bt.charged = { a: r.chargedA, b: r.chargedB };
     bt.phase = 'reveal';
     bt.deadline = this.now + BALANCE.battle.revealMs;
@@ -641,6 +669,7 @@ export class Room {
         a.points[b.elem] += 1;
         a.stats.wilds++;
         const hungry = a.hungerUntil > now;
+        this.fx({ k: 'c', x: b.x, y: b.y, p: a.id, w: b.id, e: b.elem, ...(hungry ? { x2: 1 as const } : {}) });
         this.endFor(a, bt, 'win', `Você comeu o bicho! +1 de ${b.elem === 'brasa' ? 'Brasa' : b.elem === 'mare' ? 'Maré' : 'Broto'}${hungry ? ' (Fome: XP em dobro)' : ''}.`);
         this.gainXp(a, hungry ? BALANCE.hungerXpMult : 1);
       } else if (playerDown) {
@@ -692,8 +721,10 @@ export class Room {
       loser.xp = 0;
       loser.shieldUntil = now + BALANCE.hungerShieldMs;
       loser.hungerUntil = now + BALANCE.hungerXpMs;
-      if (winner.stage < MAX_STAGE) this.setStage(winner, (winner.stage + 1) as Stage);
+      const trophy = winner.stage === MAX_STAGE;
+      if (!trophy) this.setStage(winner, (winner.stage + 1) as Stage);
       else winner.trophies = Math.min(BALANCE.trophyMax, winner.trophies + 1);
+      this.fx({ k: 's', x: winner.x, y: winner.y, w: winner.id, l: loser.id, n: (stolen - loser.stage) as 1 | 2, ...(trophy ? { tr: 1 as const } : {}), ...(wasCrown ? { cr: 1 as const } : {}) });
       winner.stats.steals++;
       const wName = speciesName(this.look(winner).form, winner.stage);
       this.endFor(winner, bt, 'win', winner.stage === MAX_STAGE && winner.trophies > 0 ? `Vitória! +1 Troféu (${winner.trophies}/${BALANCE.trophyMax}).` : `Vitória! Você roubou um estágio e virou ${wName}.`);
@@ -717,6 +748,8 @@ export class Room {
   }
 
   private eliminate(p: Player, by: string | null, killerId: number | null, reason: 'batalha' | 'zona' | 'duelo'): void {
+    const look = this.look(p);
+    this.fx({ k: 'x', x: p.x, y: p.y, id: p.id, f: look.form, s: look.stage, o: look.order, by: killerId ?? 0, r: reason === 'batalha' ? 'b' : reason === 'zona' ? 'z' : 'd' });
     const place = this.alivePlayers().length;
     p.alive = false;
     p.place = place;
@@ -829,6 +862,7 @@ export class Room {
       return;
     }
     this.setStage(p, (p.stage - 1) as Stage, BALANCE.loserHpPct);
+    this.fx({ k: 'z', x: p.x, y: p.y, id: p.id, s: p.stage });
     p.xp = 0;
     p.shieldUntil = this.now + BALANCE.zoneLossShieldMs;
     this.pushHistory(p, 'Queimado pela zona');
@@ -846,11 +880,12 @@ export class Room {
     const target = this.wildTarget();
     while (this.wilds.size < target && (burst || now >= this.nextWildAt)) {
       this.nextWildAt = now + 300;
-      if (!this.spawnWild(now) || !burst) break;
+      // O povoamento inicial (burst) não gera eventos.
+      if (!this.spawnWild(now, !burst) || !burst) break;
     }
   }
 
-  private spawnWild(now: number): boolean {
+  private spawnWild(now: number, announce = false): boolean {
     const alive = this.alivePlayers();
     for (let tries = 0; tries < 40; tries++) {
       const x = this.rng.int(0, this.map.w - 1);
@@ -861,6 +896,7 @@ export class Room {
       const hp = this.rng.int(BALANCE.wild.hpMin, BALANCE.wild.hpMax);
       const w: Wild = { kind: 'wild', id: this.nextId++, x, y, path: [], nextStepAt: 0, hp, maxHp: hp, battle: null, elem, wanderAt: now };
       this.wilds.set(w.id, w);
+      if (announce) this.fx({ k: 'w', x, y, id: w.id, e: elem });
       return true;
     }
     return false;
@@ -927,12 +963,13 @@ export class Room {
     const look = this.look(e);
     const s: EntSnap = { id: e.id, k: e.kind === 'wild' ? 'w' : 'p', x: e.x, y: e.y, f: look.form, s: look.stage, o: look.order, hp: Math.max(0, Math.round(e.hp)), mhp: this.maxHpOf(e) };
     if (e.battle) s.b = e.battle.id;
+    // Selvagens carregados também mostram a Carga (só visual).
+    if (e.battle && e.battle.charged[e.battle.a === e ? 'a' : 'b']) s.ch = 1;
     if (e.kind === 'player') {
       s.n = e.name;
       if (this.crownId === e.id) s.cr = 1;
       if (e.shieldUntil > this.now) s.sh = 1;
       if (e.trophies) s.tr = e.trophies;
-      if (e.battle && e.battle.charged[e.battle.a === e ? 'a' : 'b']) s.ch = 1;
     }
     return s;
   }
@@ -973,8 +1010,16 @@ export class Room {
       for (const w of this.wilds.values()) if (near(w)) ents.push(this.entSnap(w));
       const bs: BattleSnap[] = [];
       for (const bt of this.battles.values()) if (near({ x: bt.cx, y: bt.cy })) bs.push({ id: bt.id, x: bt.cx, y: bt.cy });
+      // Eventos no raio de visão (+1 para o que está saindo da tela); o 'x' do próprio jogador vai sempre.
+      let fx: FxEvent[] | undefined;
+      if (this.fxq.length > 0) {
+        const RF = R + 1;
+        for (const ev of this.fxq) {
+          if ((Math.abs(ev.x - v.x) <= RF && Math.abs(ev.y - v.y) <= RF) || (ev.k === 'x' && ev.id === p.id)) (fx ??= []).push(ev);
+        }
+      }
       const look = this.look(p);
-      m.conn.send({
+      const snap: Snap = {
         t: 'snap',
         el: this.elapsed,
         ph: this.phase,
@@ -1005,8 +1050,11 @@ export class Room {
           battle: p.battle?.id ?? null,
           target: p.target,
         },
-      });
+      };
+      if (fx) snap.fx = fx; // sem evento, sem chave
+      m.conn.send(snap);
     }
+    this.fxq.length = 0;
   }
 }
 
