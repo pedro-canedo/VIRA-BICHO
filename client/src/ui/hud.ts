@@ -47,8 +47,8 @@ export class Hud {
   private root: HTMLElement;
   private fx = new Anims();
   private seal = new PhaseSeal();
-  private dangerZone = h('div', { class: 'danger zone' });
-  private dangerHp = h('div', { class: 'danger hp' });
+  private dangerZone = h('div', { class: 'dvig zone' });
+  private dangerHp = h('div', { class: 'dvig hp' });
   private phaseEl = h('div', { class: 'phase' });
   private phaseLabel = h('span');
   private clockEl = h('span', { class: 'clock' });

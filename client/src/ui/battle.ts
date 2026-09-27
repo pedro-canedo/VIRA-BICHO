@@ -71,6 +71,10 @@ function center(el: Element): Pt {
   return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
 }
 
+/** Depois do impacto: os selos começam a sumir e, com o número, saem do DOM. */
+export const SEAL_FADE_AT = 560;
+export const HIT_END_AT = 720;
+
 const fmtMult = (m: number) => `×${m.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}`;
 
 /** Painel da batalha: escolha secreta, revelação simultânea e resultado. */
@@ -216,6 +220,7 @@ export class BattleUi {
   startTurn(turn: number, ms: number): void {
     this.flush();
     this.fx.cancel();
+    this.clearHits();
     this.turnEl.textContent = `TURNO ${turn}`;
     stampIn(this.turnEl, this.fx, { from: 2, ms: 180 });
     this.chosen = null;
@@ -634,7 +639,7 @@ export class BattleUi {
         { duration: 700, fill: 'forwards' },
         this.fx,
       );
-    later(720, () => num.remove(), this.fx);
+    later(HIT_END_AT, () => num.remove(), this.fx);
 
     // Selos de eficácia e de carga
     const seals: HTMLElement[] = [];
@@ -652,13 +657,20 @@ export class BattleUi {
         if (!rot) play(s, [{ transform: 'translateY(0)', opacity: 1 }, { transform: 'translateY(4px)', opacity: 0.7 }], { delay: 280, duration: 400, fill: 'forwards' }, this.fx);
       }
     }
-    later(1280, () => play(box, [{ opacity: 1 }, { opacity: 0 }], { duration: 150, fill: 'forwards' }), this.fx);
-    later(1440, () => box.remove(), this.fx);
+    // Tudo some antes do próximo b_turn/b_end (revealMs − FX_IMPACT_MS = 800 ms depois do impacto)
+    later(SEAL_FADE_AT, () => play(box, [{ opacity: 1 }, { opacity: 0 }], { duration: 150, fill: 'forwards' }), this.fx);
+    later(HIT_END_AT, () => box.remove(), this.fx);
+  }
+
+  /** Remove número e selos que sobraram (turno novo ou resultado chegou antes do fim deles). */
+  private clearHits(): void {
+    this.root.querySelectorAll('.seals, .dmgnum').forEach((e) => e.remove());
   }
 
   end(msg: End, onClosed: () => void): void {
     this.flush();
     this.fx.cancel();
+    this.clearHits();
     cancelAnimationFrame(this.raf);
     window.removeEventListener('keydown', this.onKey);
     window.clearInterval(this.embers);
@@ -693,9 +705,9 @@ export class BattleUi {
       play(txt, rm ? [{ opacity: 0 }, { opacity: 1 }] : [{ translate: '0 -20px', opacity: 0 }, { translate: '0 0', opacity: 1, offset: 0.55 }, { translate: '0 -5px', offset: 0.75 }, { translate: '0 0' }], { duration: rm ? 150 : 360 }, this.fx);
       play(this.root, [{ filter: 'saturate(1)' }, { filter: 'saturate(.4)' }], { duration: 400, fill: 'forwards' }, this.fx);
       play(you, [{ translate: '0 0', filter: 'grayscale(0)' }, { translate: rm ? '0 0' : '0 6px', filter: 'grayscale(1)' }], { duration: 300, easing: 'steps(3)', fill: 'forwards' }, this.fx);
-      // Rachadura branca em zigue-zague cruzando a moldura
+      // Rachadura branca em zigue-zague cruzando a moldura, no vão entre os lutadores e as cartas
       const crack = h('div', { class: 'pcrack' }, h('i'));
-      this.root.append(crack);
+      (this.root.querySelector('.duel') ?? this.root).append(crack);
     } else if (msg.result === 'draw') {
       play(txt, [{ opacity: 0 }, { opacity: 1 }], { duration: 150 }, this.fx);
       if (!rm) for (const b of [you, opp]) play(b, [{ translate: '0 0' }, { translate: '0 -8px' }, { translate: '0 0' }, { translate: '0 -4px' }, { translate: '0 0' }], { duration: 420, easing: 'steps(4)' }, this.fx);
