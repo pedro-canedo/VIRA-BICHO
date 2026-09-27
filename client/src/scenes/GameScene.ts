@@ -1,12 +1,19 @@
 import Phaser from 'phaser';
-import type { EntSnap, Fruit, FxEvent, Snap } from '@vb/shared';
+import { FX_CHARGED, type EntSnap, type Fruit, type FxEvent, type Snap } from '@vb/shared';
 import { ZoneFx } from '../render/ambient';
+import { Arenas } from '../render/arena';
+import { Auras } from '../render/auras';
+import { Biome } from '../render/biome';
 import { drawCreature, lookKey } from '../render/creature';
+import { Critters } from '../render/critters';
+import { Fruits } from '../render/fruits';
 import { Fx, pop, stepView, type EntView, type FxHost } from '../render/fx';
 import { FXC } from '../render/fxpalette';
-import { TILE, drawFruit, renderMap } from '../render/map';
+import { Light } from '../render/light';
+import { TILE, renderMap } from '../render/map';
 import { Runes } from '../render/runes';
 import { Spells } from '../render/spells';
+import { Tap } from '../render/tap';
 
 const center = (t: number) => t * TILE + TILE / 2;
 const byYDesc = (a: Phaser.GameObjects.Text, b: Phaser.GameObjects.Text) => b.y - a.y;
@@ -18,24 +25,32 @@ export class GameScene extends Phaser.Scene implements FxHost {
   fx!: Fx;
   groundG!: Phaser.GameObjects.Graphics;
   airG!: Phaser.GameObjects.Graphics;
+  auraBackG!: Phaser.GameObjects.Graphics;
+  overG!: Phaser.GameObjects.Graphics;
   groundBudget = 0;
+  overBudget = 0;
+  backBudget = 0;
   private mapImg: Phaser.GameObjects.Image | null = null;
-  private fruitImgs: Phaser.GameObjects.Image[] = [];
   private ents = new Map<number, EntView>();
   private dying: EntView[] = [];
   private seen = new Set<number>();
   private marked = new Set<number>();
   private zoneG!: Phaser.GameObjects.Graphics;
-  private auraBackG!: Phaser.GameObjects.Graphics;
-  private bubbleG!: Phaser.GameObjects.Graphics;
-  private overG!: Phaser.GameObjects.Graphics;
   private zone!: ZoneFx;
   private spells!: Spells;
   private runes!: Runes;
+  private arenas!: Arenas;
+  private auras!: Auras;
+  private critters!: Critters;
+  private light!: Light;
+  private biome!: Biome;
+  private fruits!: Fruits;
+  private tap!: Tap;
+  private duelists: (EntView | null)[] = [null, null];
+  private decor: number[] = [];
   private snap: Snap | null = null;
   private fresh = true;
   private camPos: { x: number; y: number } | null = null;
-  private dest: { x: number; y: number; until: number } | null = null;
   private ready = false;
   private pending: (() => void)[] = [];
   private zw = { x: 0, y: 0, r: 0 };
@@ -70,13 +85,22 @@ export class GameScene extends Phaser.Scene implements FxHost {
     this.groundG = this.add.graphics().setDepth(7);
     this.auraBackG = this.add.graphics().setDepth(9);
     this.airG = this.add.graphics().setDepth(890);
-    this.bubbleG = this.add.graphics().setDepth(900);
     this.overG = this.add.graphics().setDepth(950);
     this.zone = new ZoneFx(this, this.zoneG);
     this.spells = new Spells(this);
     this.runes = new Runes(this, this);
+    this.arenas = new Arenas(this, this);
+    this.auras = new Auras(this, this);
+    this.critters = new Critters(this);
+    this.biome = new Biome(this, this);
+    this.fruits = new Fruits(this, this);
+    this.tap = new Tap(this);
     this.applyZoom();
-    this.scale.on('resize', () => this.applyZoom());
+    this.light = new Light(this, this);
+    this.scale.on('resize', () => {
+      this.applyZoom();
+      this.light.resize();
+    });
     this.input.on('pointerup', (p: Phaser.Input.Pointer) => this.handleTap(p));
     this.ready = true;
     for (const fn of this.pending.splice(0)) fn();
@@ -145,6 +169,15 @@ export class GameScene extends Phaser.Scene implements FxHost {
     return e < this.punchIn ? this.punchAmt * (e / this.punchIn) : this.punchAmt * (1 - (e - this.punchIn) / this.punchOut);
   }
 
+  biomeAt(x: number, y: number): number {
+    return this.biome.biomeAt(x, y);
+  }
+
+  playerAt(x: number, y: number): EntView | undefined {
+    for (const v of this.ents.values()) if (v.data.k === 'p' && v.data.x === x && v.data.y === y) return v;
+    return undefined;
+  }
+
   zoneWorld(): { x: number; y: number; r: number } {
     const z = this.snap?.z;
     if (z) {
@@ -165,21 +198,29 @@ export class GameScene extends Phaser.Scene implements FxHost {
   // ---------------------------------------------------------------- mundo
 
   private handleTap(p: Phaser.Input.Pointer): void {
-    if (!this.snap?.me?.alive) return;
+    const s = this.snap;
+    if (!s?.me?.alive) return;
     const wx = p.worldX;
     const wy = p.worldY;
-    let best: { id: number; d: number } | null = null;
+    let best: EntView | null = null;
+    let bd = 13;
     for (const v of this.ents.values()) {
-      if (v.data.id === this.snap.me.id) continue;
+      if (v.data.id === s.me.id) continue;
       const d = Math.hypot(v.x - wx, v.y - 2 - wy);
-      if (d < 13 && (!best || d < best.d)) best = { id: v.data.id, d };
+      if (d < bd) {
+        bd = d;
+        best = v;
+      }
     }
+    const now = this.time.now;
     if (best) {
-      this.onTap(null, best.id);
+      // Jogador durante a Coleta é alvo inválido.
+      this.tap.creature(best, s.ph === 'coleta' && best.data.k === 'p', now);
+      this.onTap(null, best.data.id);
       return;
     }
     const tile = { x: Math.floor(wx / TILE), y: Math.floor(wy / TILE) };
-    this.dest = { ...tile, until: this.time.now + 900 };
+    this.tap.ground(tile.x, tile.y, now);
     this.onTap(tile, null);
   }
 
@@ -187,17 +228,16 @@ export class GameScene extends Phaser.Scene implements FxHost {
   setWorld(w: number, h: number, tiles: Uint8Array, fruits: Fruit[]): void {
     this.whenReady(() => {
       this.clearWorld();
-      if (this.textures.exists('map')) this.textures.remove('map');
-      this.textures.addCanvas('map', renderMap(w, h, tiles));
-      this.mapImg = this.add.image(0, 0, 'map').setOrigin(0, 0).setDepth(0);
-      this.fruitImgs = fruits.map((f) => {
-        const key = `fruit-${f.elem}`;
-        if (!this.textures.exists(key)) this.textures.addCanvas(key, drawFruit(f.elem));
-        const img = this.add.image(center(f.x), center(f.y), key).setDepth(3);
-        this.tweens.add({ targets: img, y: img.y - 2, yoyo: true, repeat: -1, duration: 700, ease: 'Sine.easeInOut' });
-        return img;
-      });
       this.fx.readPrefs();
+      // Chão vivo: com tier médio/alto e WebGL, tufos e lava saem do canvas e vão para a GPU.
+      const bake = this.biome.setWorld(w, h, tiles);
+      this.decor.length = 0;
+      if (this.textures.exists('map')) this.textures.remove('map');
+      this.textures.addCanvas('map', renderMap(w, h, tiles, { bakeDecor: bake, decor: bake ? undefined : this.decor }));
+      this.mapImg = this.add.image(0, 0, 'map').setOrigin(0, 0).setDepth(0);
+      if (bake) this.biome.hideDecor();
+      else this.biome.buildDecor(this.decor);
+      this.fruits.setWorld(fruits);
       this.fx.prewarm();
     });
   }
@@ -209,8 +249,6 @@ export class GameScene extends Phaser.Scene implements FxHost {
     this.dying.length = 0;
     this.mapImg?.destroy();
     this.mapImg = null;
-    for (const f of this.fruitImgs) f.destroy();
-    this.fruitImgs = [];
     this.snap = null;
     this.fresh = true;
     this.camPos = null;
@@ -224,12 +262,18 @@ export class GameScene extends Phaser.Scene implements FxHost {
     this.cameras.main.setZoom(this.baseZoom);
     this.spells.clear();
     this.runes.clear();
+    this.arenas.clear();
+    this.auras.clear();
+    this.critters.clear();
+    this.biome.clear();
+    this.fruits.clear();
+    this.tap.clear();
+    this.light.reset();
     this.fx.killAll();
     this.zone.reset();
     this.groundG.clear();
     this.auraBackG.clear();
     this.airG.clear();
-    this.bubbleG.clear();
     this.overG.clear();
   }
 
@@ -299,11 +343,30 @@ export class GameScene extends Phaser.Scene implements FxHost {
       tintOn: -1,
       bob: 0,
       burning: false,
-      stepAt: 0,
-      dir: 1,
+      stepAt: -1e9,
+      dir: -1,
       acc: 0,
       burnT: 0,
       burnFlashT: 0,
+      hop: 0,
+      wsx: 1,
+      wsy: 1,
+      stepN: 0,
+      fxX: 0,
+      fxY: 0,
+      fxSx: 1,
+      fxSy: 1,
+      portalT0: 0,
+      chOn: false,
+      chT0: 0,
+      chSlot: -1,
+      chAcc: 0,
+      chUsed: false,
+      shOn: false,
+      shT0: -1e9,
+      crOn: false,
+      auraAcc: Math.random() * 200,
+      auraAcc2: 0,
       dieAt: 0,
       fadeMs: 0,
       hidden: false,
@@ -319,16 +382,19 @@ export class GameScene extends Phaser.Scene implements FxHost {
     this.snap = s;
     this.fx.fighting = !!(s.me?.alive && s.me.battle !== null);
     this.zone.onSnap(s, now, this.fresh);
+    this.light.onSnap(s, now, this.fresh);
     this.fresh = false;
 
     // (1) Eventos, com as EntViews ainda vivas.
     this.marked.clear();
-    if (s.fx) for (const ev of s.fx) this.onFx(ev, now);
+    if (s.fx) for (const ev of s.fx) this.onFx(ev, now, skipDiff);
+    this.arenas.onSnap(s, now);
 
     // (2) Entidades e diffs.
     const seen = this.seen;
     seen.clear();
     const res = Math.ceil(this.zoom() * (window.devicePixelRatio || 1));
+    const focus = s.view !== null ? this.ents.get(s.view) : undefined;
     for (const e of s.ents) {
       seen.add(e.id);
       const key = this.texFor(e);
@@ -336,21 +402,27 @@ export class GameScene extends Phaser.Scene implements FxHost {
       if (!v) {
         v = this.newView(e, key, res);
         this.ents.set(e.id, v);
-        this.tweens.add({ targets: v, alpha: 1, duration: 200 });
+        // Selvagem de portal sobe do chão; o resto entra com fade de 200 ms.
+        if (skipDiff || !this.critters.intro(v, now)) this.tweens.add({ targets: v, alpha: 1, duration: 200 });
       } else if (v.key !== key && v.texSwapAt === 0) {
         // Sem evento (ou já liberada): troca direto, com o pop que já existia.
         v.key = key;
         v.img.setTexture(key);
         if (!skipDiff) pop(v, 1.5, 350, now);
       }
-      if (!skipDiff && (e.x !== v.px || e.y !== v.py)) {
+      this.auras.diff(v, e, now, skipDiff);
+      const fx0 = v.px;
+      const fy0 = v.py;
+      const moved = !skipDiff && (e.x !== fx0 || e.y !== fy0);
+      if (moved) {
         v.stepAt = now;
-        if (e.x !== v.px) v.dir = e.x > v.px ? 1 : -1;
+        if (e.x !== fx0) v.dir = e.x > fx0 ? 1 : -1;
       }
       v.px = e.x;
       v.py = e.y;
       v.ps = e.s;
       v.data = e;
+      if (moved) this.critters.step(v, fx0, fy0, now, focus);
       if (v.label) {
         const txt = `${e.cr ? '👑 ' : ''}${e.n ?? ''}`;
         if (v.label.text !== txt) v.label.setText(txt);
@@ -358,27 +430,39 @@ export class GameScene extends Phaser.Scene implements FxHost {
       }
     }
 
-    // (3) Os marcados por 'x'/'c' ficam com o efeito; os outros saem com fade de 150 ms.
+    // (3) Os marcados por 'x'/'c' ficam com o efeito; selvagem que some em batalha fugiu; os outros saem com fade de 150 ms.
     for (const [id, v] of this.ents) {
       if (seen.has(id)) continue;
       this.ents.delete(id);
+      this.auras.drop(v);
       if (this.marked.has(id)) {
         if (v.dieAt === 0) v.dieAt = now + 600;
+      } else if (!skipDiff && v.data.k === 'w' && v.data.b !== undefined) {
+        let from: EntView | undefined;
+        for (const o of this.ents.values()) if (o.data.b === v.data.b) from = o;
+        this.critters.fled(v, from, now);
       } else {
         v.dieAt = now + 150;
         v.fadeMs = 150;
       }
       this.dying.push(v);
     }
-    const avail = new Set(s.fr);
-    this.fruitImgs.forEach((img, i) => img.setVisible(avail.has(i)));
+    this.fruits.onSnap(s, now, skipDiff);
+    this.auras.onSnap(s, now, skipDiff);
   }
 
-  private onFx(ev: FxEvent, now: number): void {
+  private onFx(ev: FxEvent, now: number, skip: boolean): void {
     switch (ev.k) {
-      case 'h':
-        this.spells.hit(ev, now);
+      case 'bt':
+        if (!skip) this.arenas.open(ev, now);
         return;
+      case 'h': {
+        this.spells.hit(ev, now);
+        this.arenas.hit(ev.bt, ev.a, now);
+        const a = this.ents.get(ev.a);
+        if (a && ev.fl & FX_CHARGED) this.auras.chargedHit(a);
+        return;
+      }
       case 'fu':
         this.spells.fury(ev, now);
         return;
@@ -395,6 +479,7 @@ export class GameScene extends Phaser.Scene implements FxHost {
       case 's': {
         const l = this.ents.get(ev.l);
         if (l) l.koUntil = 0;
+        if (ev.cr) this.auras.stolen();
         this.runes.steal(ev, now);
         return;
       }
@@ -405,16 +490,13 @@ export class GameScene extends Phaser.Scene implements FxHost {
         this.runes.eliminate(ev, v, now);
         return;
       }
-      case 'c': {
+      case 'c':
         this.marked.add(ev.w);
-        const v = this.ents.get(ev.w);
-        if (v) {
-          v.koUntil = 0;
-          v.dieAt = now + 150;
-          v.fadeMs = 150;
-        }
+        this.critters.eat(ev, now);
         return;
-      }
+      case 'w':
+        if (!skip) this.critters.spawn(ev, now);
+        return;
       default:
         return;
     }
@@ -428,26 +510,36 @@ export class GameScene extends Phaser.Scene implements FxHost {
     fx.preUpdate(now);
     this.groundG.clear();
     this.airG.clear();
-    this.groundBudget = 0;
+    this.auraBackG.clear();
+    this.overG.clear();
+    this.groundBudget = this.overBudget = this.backBudget = 0;
+    this.critters.update(now);
+    this.arenas.begin();
     const k = 1 - Math.exp(-delta / 60);
     const focus = s.view ?? -1;
+    const hunger = !!(s.me?.alive && s.me.hungerMs > 0);
+    const duelBt = s.ph === 'duelo' ? (s.bs[0]?.id ?? -1) : -1;
+    let nd = 0;
+    this.duelists[0] = this.duelists[1] = null;
     for (const v of this.ents.values()) {
       const e = v.data;
       const frozen = now < v.freezeUntil;
       if (!frozen) {
-        const tx = center(e.x);
-        const ty = center(e.y);
-        v.x += (tx - v.x) * k;
-        v.y += (ty - v.y) * k;
-        const moving = Math.abs(tx - v.x) + Math.abs(ty - v.y) > 0.5;
-        v.bob = moving ? Math.abs(Math.sin(now / 70 + e.id)) * -1.5 : Math.sin(now / 380 + e.id) * 0.6;
+        v.x += (center(e.x) - v.x) * k;
+        v.y += (center(e.y) - v.y) * k;
       }
+      this.critters.animate(v, now, frozen);
       if (v.texSwapAt > 0 && now >= v.texSwapAt) this.swapTexture(v, now);
       this.place(v, now, frozen);
       v.label?.setPosition(v.x, v.y - 13);
       v.burning = false;
       if (s.ph !== 'duelo' && Math.hypot(e.x - s.z.x, e.y - s.z.y) >= s.z.r) this.zone.burn(v, now, delta, e.id === focus);
       else v.burnT = v.burnFlashT = 0;
+      if (e.b !== undefined) {
+        this.arenas.fighter(v);
+        if (e.b === duelBt && nd < 2) this.duelists[nd++] = v;
+      }
+      this.auras.view(v, now, delta, hunger);
     }
     for (let i = this.dying.length - 1; i >= 0; i--) {
       const v = this.dying[i];
@@ -463,10 +555,16 @@ export class GameScene extends Phaser.Scene implements FxHost {
     this.separateLabels();
     this.updateCamera(s, now, delta);
     this.zone.draw(s, now, delta);
+    this.tap.update(s, now);
+    this.arenas.update(now, delta);
     this.spells.update(now, delta);
     this.runes.update(now, delta);
-    this.drawBubbles(s, now);
-    this.drawOverlay(s, now, delta);
+    this.auras.update(s, now, delta);
+    this.drawOverlay(now, delta);
+    const cp = this.camPos;
+    this.light.update(s, now, cp ? cp.x : 0, cp ? cp.y : 0, this.duelists);
+    this.biome.update(s, fx.fighting);
+    this.fruits.update(now, delta);
     fx.postUpdate(now);
   }
 
@@ -482,12 +580,11 @@ export class GameScene extends Phaser.Scene implements FxHost {
     const p = stepView(v, now, frozen);
     const sc = v.base * p;
     v.img
-      .setPosition(v.x + v.ox, v.y + v.bob + v.oy)
-      .setScale(sc * v.sx, sc * v.sy)
+      .setPosition(v.x + v.ox + v.fxX, v.y + v.hop + v.oy + v.fxY)
+      .setScale(sc * v.sx * v.wsx * v.fxSx, sc * v.sy * v.wsy * v.fxSy)
       .setDepth(10 + v.y / TILE)
       .setVisible(!v.hidden || now < v.dieAt - 20);
   }
-
   /** Empurra para cima os nomes que se sobrepõem (bichos colados numa batalha, por exemplo). */
   private separateLabels(): void {
     const labs = this.labs;
@@ -579,22 +676,9 @@ export class GameScene extends Phaser.Scene implements FxHost {
 
   // ---------------------------------------------------------------- camadas por frame
 
-  private drawBubbles(s: Snap, time: number): void {
-    const g = this.bubbleG;
-    g.clear();
-    for (const b of s.bs) {
-      const r = 22 + Math.sin(time / 200 + b.id) * 1.5;
-      g.fillStyle(0xffffff, 0.07);
-      g.fillCircle(center(b.x), center(b.y), r);
-      g.lineStyle(1.5, 0xffcf3f, 0.85);
-      g.strokeCircle(center(b.x), center(b.y), r);
-    }
-  }
-
-  private drawOverlay(s: Snap, now: number, delta: number): void {
+  /** Barras de HP (com fantasma, contorno de queimadura e piscada) no overG. */
+  private drawOverlay(now: number, delta: number): void {
     const g = this.overG;
-    g.clear();
-    const myTarget = s.me?.target ?? null;
     for (const v of this.ents.values()) {
       const e = v.data;
       const mhp = Math.max(1, e.mhp);
@@ -609,51 +693,51 @@ export class GameScene extends Phaser.Scene implements FxHost {
       if (v.ghostHp > v.shownHp && now >= v.ghostHoldUntil) v.ghostHp = Math.max(v.shownHp, v.ghostHp - (mhp * delta) / 450);
       if (v.ghostHp < v.shownHp) v.ghostHp = v.shownHp;
       const showBar = e.k === 'p' || v.shownHp < mhp || v.ghostHp > v.shownHp || e.b !== undefined;
-      if (showBar) {
-        const pct = Math.max(0, v.shownHp / mhp);
-        const thick = now < v.thickUntil ? 1 : 0;
-        const bx = v.x - 8;
-        const by = v.y + 8 - thick;
-        if (v.burning && Math.floor(now / 150) & 1) {
-          g.fillStyle(FXC.magenta, 1);
-          g.fillRect(bx - 1, by - 1, 18, 5 + thick);
-        }
-        g.fillStyle(0x000000, 0.65);
-        g.fillRect(bx, by, 16, 3 + thick);
-        if (v.ghostHp > v.shownHp) {
-          g.fillStyle(FXC.ghost, 1);
-          g.fillRect(bx + 0.5, by + 0.5, 15 * Math.min(1, v.ghostHp / mhp), 2 + thick);
-        }
-        const blink = pct <= 0.25 && Math.floor(now / 250) & 1 ? 0.4 : 1;
-        g.fillStyle(pct > 0.5 ? 0x58e07a : pct > 0.25 ? 0xffcf3f : 0xff4f6d, blink);
-        g.fillRect(bx + 0.5, by + 0.5, 15 * pct, 2 + thick);
+      if (!showBar || !this.fx.view.contains(v.x, v.y)) continue;
+      this.overBudget += 4;
+      const pct = Math.max(0, v.shownHp / mhp);
+      const thick = now < v.thickUntil ? 1 : 0;
+      const bx = v.x - 8;
+      const by = v.y + 8 - thick;
+      if (v.burning && Math.floor(now / 150) & 1) {
+        g.fillStyle(FXC.magenta, 1);
+        g.fillRect(bx - 1, by - 1, 18, 5 + thick);
       }
-      if (e.sh) {
-        g.lineStyle(1, 0x7cc4ff, 0.6 + Math.sin(now / 120) * 0.3);
-        g.strokeCircle(v.x, v.y, 11);
+      g.fillStyle(0x000000, 0.65);
+      g.fillRect(bx, by, 16, 3 + thick);
+      if (v.ghostHp > v.shownHp) {
+        g.fillStyle(FXC.ghost, 1);
+        g.fillRect(bx + 0.5, by + 0.5, 15 * Math.min(1, v.ghostHp / mhp), 2 + thick);
       }
-      if (e.ch) {
-        g.fillStyle(0xffe066, 1);
-        g.fillRect(v.x + 7, v.y - 9 + Math.sin(now / 90) * 1.5, 2, 2);
-      }
-      if (e.id === myTarget) {
-        g.lineStyle(1.5, 0xffcf3f, 0.6 + Math.sin(now / 110) * 0.35);
-        g.strokeEllipse(v.x, v.y + 7, 20, 8);
-      }
-    }
-    if (this.dest && now < this.dest.until) {
-      const x = center(this.dest.x);
-      const y = center(this.dest.y);
-      const a = (this.dest.until - now) / 900;
-      g.lineStyle(1.5, 0xffffff, a);
-      g.lineBetween(x - 3, y - 3, x + 3, y + 3);
-      g.lineBetween(x - 3, y + 3, x + 3, y - 3);
+      const blink = pct <= 0.25 && Math.floor(now / 250) & 1 ? 0.4 : 1;
+      g.fillStyle(pct > 0.5 ? 0x58e07a : pct > 0.25 ? 0xffcf3f : 0xff4f6d, blink);
+      g.fillRect(bx + 0.5, by + 0.5, 15 * pct, 2 + thick);
     }
   }
 
-  /** Estatísticas para testes (partículas vivas e tier). */
-  fxStats(): { alive: number; tier: number; rm: boolean; wisp: number; pixels: number } {
+  /** Estatísticas para testes: partículas vivas por grupo, picos, teto e tier. */
+  fxStats(): Record<string, number | boolean> {
     const fx = this.fx;
-    return { alive: fx.alive(), tier: fx.tier, rm: fx.rm, wisp: fx.wisp.getAliveParticleCount(), pixels: fx.pixels.getAliveParticleCount() };
+    return {
+      alive: fx.alive(),
+      tier: fx.tier,
+      rm: fx.rm,
+      cap: fx.cap,
+      wisp: fx.wisp.getAliveParticleCount(),
+      pixels: fx.pixels.getAliveParticleCount(),
+      amb: fx.aliveOf(fx.amb),
+      peak: fx.peak,
+      peakEv: fx.peakEv,
+      peakAmb: fx.peakAmb,
+      overCap: fx.overCap,
+      fps: Math.round(this.game.loop.actualFps * 10) / 10,
+      ground: this.groundBudget,
+      over: this.overBudget,
+      back: this.backBudget,
+    };
+  }
+
+  resetFxPeaks(): void {
+    this.fx.resetPeaks();
   }
 }

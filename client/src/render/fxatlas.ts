@@ -30,6 +30,7 @@ const SPRITES: Record<string, Sprite> = {
   bang: ['.x.', 'xxx', 'xxx', '.x.', '.x.', '...', '.x.'],
   chevron: ['x.x', '.x.'],
   hex: ['..xxx..', '.g...g.', 'g.....g', 'x.....x', 'g.....g', '.g...g.', '..xxx..'],
+  p12: ['x', 'x'],
 };
 
 // Posições no atlas (x, y). Os anéis ocupam a faixa da esquerda.
@@ -56,6 +57,7 @@ const AT: Record<string, [number, number]> = {
   p21: [123, 0],
   ash: [123, 3],
   chevron: [118, 3],
+  p12: [70, 8],
 };
 
 const RINGS: [string, number, number][] = [
@@ -171,6 +173,13 @@ export function buildFxAtlas(scene: Phaser.Scene): void {
     }
   }
   frames.push(['orb', ox, oy, 7, 7]);
+  // 'bango': o '!' com contorno de 1 px #140f24 já pintado (o tint só pinta o miolo claro).
+  const [bx, by] = [64, 8];
+  const bang = SPRITES.bang;
+  ctx.fillStyle = '#140f24';
+  for (let y = 0; y < bang.length; y++) for (let x = 0; x < 3; x++) if (bang[y][x] === 'x') ctx.fillRect(bx + x, by + y, 3, 3);
+  paint(ctx, bang, bx + 1, by + 1);
+  frames.push(['bango', bx, by, 5, 9]);
   for (const [name, s] of Object.entries(SPRITES)) {
     const [x, y] = AT[name];
     paint(ctx, s, x, y);

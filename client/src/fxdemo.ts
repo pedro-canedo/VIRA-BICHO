@@ -36,6 +36,7 @@ interface Scene {
   ms: number;
   steps: () => Step[];
 }
+type Tile = [number, number];
 
 const ME = 1;
 
@@ -70,6 +71,24 @@ export function runFxDemo({ onMsg, scene, name }: Ctx): void {
   let alive = true;
   let view = ME;
   let duel: { a: string; b: string } | null = null;
+  let hunger = 0;
+  let target: number | null = null;
+  let crown: { x: number; y: number } | null = null;
+  let dest: Tile | null = null;
+  const frOff = new Set<number>();
+  // Andadores: cada um anda 1 tile a cada `every` ms pelo caminho (em loop).
+  let walkers: { e: EntSnap; path: Tile[]; i: number; acc: number; every: number }[] = [];
+  const walk = (e: EntSnap, path: Tile[], every: number = BALANCE.stepMs) => walkers.push({ e, path, i: 0, acc: 0, every });
+  const loop = (x0: number, y0: number, w: number, h: number): Tile[] => {
+    const p: Tile[] = [];
+    for (let x = x0; x < x0 + w; x++) p.push([x, y0]);
+    for (let y = y0; y < y0 + h; y++) p.push([x0 + w, y]);
+    for (let x = x0 + w; x > x0; x--) p.push([x, y0 + h]);
+    for (let y = y0 + h; y > y0; y--) p.push([x0, y]);
+    return p;
+  };
+  const JX = 30;
+  const JY = 19;
 
   const player = (id: number, n: string, x: number, y: number, f: Form, s: Stage, o: Elem[]): EntSnap => {
     const e: EntSnap = { id, k: 'p', n, x, y, f, s, o, hp: maxHp(s), mhp: maxHp(s) };
@@ -120,7 +139,34 @@ export function runFxDemo({ onMsg, scene, name }: Ctx): void {
     alive = true;
     view = ME;
     duel = null;
+    hunger = 0;
+    target = null;
+    crown = null;
+    dest = null;
+    frOff.clear();
+    walkers = [];
     player(ME, 'Você', mx, my, 'brasa', 2, ['brasa']);
+  };
+  const moveMe = (x: number, y: number) => {
+    const me = ents.get(ME)!;
+    me.x = x;
+    me.y = y;
+  };
+  const eatEv = (p: EntSnap, w: EntSnap, x2 = false) => {
+    ents.delete(w.id);
+    if (w.b) endBattle(w.b);
+    p.hp = Math.min(p.mhp, p.hp + Math.round(p.mhp * 0.15));
+    queue.push({ k: 'c', x: w.x, y: w.y, p: p.id, w: w.id, e: w.o[0], ...(x2 ? { x2: 1 as const } : {}) });
+  };
+  const spawnEv = (x: number, y: number, e: Elem) => {
+    const w = wild(x, y, e);
+    queue.push({ k: 'w', x, y, id: w.id, e });
+    return w;
+  };
+  const btEv = (a: EntSnap, b: EntSnap, kd: 'p' | 'w' | 'f' = b.k === 'w' ? 'w' : 'p') => {
+    const id = battle(a, b);
+    queue.push({ k: 'bt', x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, id, a: a.id, b: b.id, kd });
+    return id;
   };
 
   // ---------------------------------------------------------------- cenas
@@ -346,6 +392,346 @@ export function runFxDemo({ onMsg, scene, name }: Ctx): void {
         ];
       },
     },
+    arena: {
+      ms: 7600,
+      steps: () => {
+        const a = player(nextId++, 'Rival', mx - 3, my + 2, 'brasa', 2, ['brasa']);
+        const b = player(nextId++, 'Nina', mx - 2, my + 2, 'mare', 2, ['mare']);
+        const c = player(nextId++, 'Zeca', mx + 2, my - 2, 'broto', 1, ['broto']);
+        const w = wild(mx + 3, my - 2, 'mare');
+        const d = wild(mx + 1, my + 1, 'brasa');
+        let bt = 0;
+        return [
+          [300, () => (bt = btEv(a, b))],
+          [1200, () => btEv(c, w)],
+          [1900, () => hit(a, b, 9, 'ataque', 1)],
+          [2600, () => hit(w, c, 4, 'ataque', 0)],
+          [3300, () => hit(b, a, 8, 'defesa', -1)],
+          // O selvagem foge: some de s.bs e do snapshot sem 'c' nem 'x'.
+          [4200, () => {
+            endBattle(w.b ?? 0);
+            ents.delete(w.id);
+          }],
+          [4800, () => endBattle(bt)],
+          // A sua batalha: a arena fica dourada e as outras brancas a 0,4.
+          [5400, () => {
+            btEv(ents.get(ME)!, d);
+            bt = btEv(a, b);
+          }],
+          [6400, () => hit(ents.get(ME)!, d, 5, 'ataque', 1)],
+        ];
+      },
+    },
+    carga: {
+      ms: 7000,
+      steps: () => {
+        const a = player(nextId++, 'Rival', mx - 3, my + 2, 'brasa', 2, ['brasa']);
+        const b = player(nextId++, 'Nina', mx - 2, my + 2, 'mare', 2, ['mare']);
+        const c = player(nextId++, 'Zeca', mx + 2, my + 2, 'broto', 3, ['broto']);
+        const d = player(nextId++, 'Bia', mx + 3, my + 2, 'quimera', 3, ['brasa', 'mare', 'broto']);
+        const e = player(nextId++, 'Ovo', mx - 2, my - 2, 'neutro', 0, []);
+        const w = wild(mx - 1, my - 2, 'brasa');
+        return [
+          [100, () => {
+            battle(a, b);
+            battle(c, d);
+            battle(e, w);
+          }],
+          [300, () => (a.ch = b.ch = 1)],
+          [700, () => (c.ch = d.ch = 1)],
+          [1100, () => (e.ch = w.ch = 1)],
+          [3600, () => {
+            // A Carga do Rival vira raio; a da Nina some sem golpe.
+            hit(a, b, 20, 'ataque', 1, FX_CHARGED);
+            delete a.ch;
+          }],
+          [4400, () => delete b.ch],
+          [5200, () => {
+            hit(d, c, 24, 'ataque', 0, FX_CHARGED);
+            delete d.ch;
+          }],
+        ];
+      },
+    },
+    comer: {
+      ms: 6000,
+      steps: () => {
+        const me = ents.get(ME)!;
+        me.hp = Math.round(me.mhp * 0.6);
+        const w1 = wild(mx + 1, my, 'mare');
+        const a = player(nextId++, 'Rival', mx - 3, my + 1, 'broto', 2, ['broto']);
+        const w2 = wild(mx - 2, my + 1, 'broto');
+        const c = player(nextId++, 'Zeca', mx + 2, my - 2, 'mare', 1, ['mare']);
+        const w3 = wild(mx + 3, my - 2, 'brasa');
+        return [
+          [200, () => {
+            battle(me, w1);
+            battle(a, w2);
+            battle(c, w3);
+          }],
+          [700, () => eatEv(me, w1)],
+          [2000, () => eatEv(a, w2, true)],
+          [3400, () => {
+            // Fugiu
+            endBattle(w3.b ?? 0);
+            ents.delete(w3.id);
+          }],
+          [4200, () => {
+            const w4 = wild(mx - 1, my - 1, 'brasa');
+            battle(me, w4);
+          }],
+          [4800, () => {
+            const w4 = [...ents.values()].find((e) => e.k === 'w' && e.b === me.b);
+            if (w4) eatEv(me, w4, true);
+          }],
+        ];
+      },
+    },
+    passos: {
+      ms: 9000,
+      steps: () => {
+        const looks: [Form, Stage, Elem[]][] = [
+          ['brasa', 3, ['brasa']],
+          ['mare', 2, ['mare']],
+          ['broto', 1, ['broto']],
+          ['vapor', 3, ['brasa', 'mare']],
+          ['cinza', 2, ['brasa', 'broto']],
+          ['mangue', 3, ['mare', 'broto']],
+          ['quimera', 3, ['brasa', 'mare', 'broto']],
+          ['neutro', 0, ['mare']],
+        ];
+        moveMe(JX, JY);
+        const me = ents.get(ME)!;
+        setLook(me, 'brasa', 3, ['brasa']);
+        walk(me, loop(JX - 2, JY - 2, 4, 3));
+        looks.forEach(([f, s, o], i) => {
+          const e = player(nextId++, `B${i}`, JX - 6 + (i % 4) * 3, JY - 3 + Math.floor(i / 4) * 5, f, s, o);
+          walk(e, loop(e.x, e.y, 2, 2));
+        });
+        const w = wild(JX + 5, JY + 3, 'broto');
+        walk(w, loop(w.x, w.y, 2, 1), BALANCE.wildStepMs);
+        return [];
+      },
+    },
+    bioma: {
+      ms: 7000,
+      steps: () => {
+        moveMe(JX, JY);
+        ph = 'coleta';
+        el = 40_000;
+        z = { x: JX, y: JY, r: 30, tr: 30 };
+        return [
+          [3500, () => {
+            // Durante a sua batalha o ambiente fica 2,5× mais lento.
+            const w = wild(JX + 1, JY, 'brasa');
+            battle(ents.get(ME)!, w);
+          }],
+        ];
+      },
+    },
+    luz: {
+      ms: 9000,
+      steps: () => {
+        const r = player(nextId++, 'Rival', mx + 1, my, 'mare', 3, ['mare']);
+        ph = 'coleta';
+        el = 60_000;
+        z = { x: mx, y: my, r: 20, tr: 20 };
+        return [
+          [1500, () => {
+            ph = 'cacada';
+            el = 180_000;
+          }],
+          [3000, () => (el = 238_000)],
+          [3300, () => {
+            ph = 'final';
+            el = 242_000;
+          }],
+          [4600, () => (el = 296_000)],
+          [5200, () => {
+            ph = 'duelo';
+            el = 300_000;
+            z = { x: mx, y: my, r: 6, tr: 6 };
+            duel = { a: 'Você', b: 'Rival' };
+            btEv(ents.get(ME)!, r, 'f');
+          }],
+          [6600, () => hit(r, ents.get(ME)!, 18, 'ataque', 1)],
+          [7800, () => {
+            const b = ents.get(ME)!.b ?? 0;
+            const me = ents.get(ME)!;
+            queue.push({ k: 'fu', x: me.x + 0.5, y: me.y, bt: b, a: ME, b: r.id, va: 8, vb: 9 });
+          }],
+        ];
+      },
+    },
+    auras: {
+      ms: 7000,
+      steps: () => {
+        const looks: [Form, Elem[]][] = [
+          ['brasa', ['brasa']],
+          ['mare', ['mare']],
+          ['broto', ['broto']],
+          ['vapor', ['brasa', 'mare']],
+          ['cinza', ['brasa', 'broto']],
+          ['mangue', ['mare', 'broto']],
+          ['quimera', ['brasa', 'mare', 'broto']],
+        ];
+        const list = looks.map(([f, o], i) => player(nextId++, f, mx - 3 + (i % 4) * 2, my - 2 + Math.floor(i / 4) * 4, f, 3, o));
+        list[0].tr = 1;
+        list[1].tr = 2;
+        list[2].tr = 3;
+        list[3].cr = 1;
+        const me = ents.get(ME)!;
+        moveMe(mx + 3, my + 2);
+        hunger = 20_000;
+        return [
+          [500, () => (list[4].sh = me.sh = 1)],
+          [3500, () => delete list[4].sh],
+          [5000, () => delete me.sh],
+        ];
+      },
+    },
+    frutas: {
+      ms: 7000,
+      steps: () => {
+        const i = map.fruits.findIndex((f) => f.elem === 'broto');
+        const f = map.fruits[i];
+        moveMe(f.x - 3, f.y);
+        const me = ents.get(ME)!;
+        const j = map.fruits.findIndex((g, k) => k !== i && Math.abs(g.x - f.x) + Math.abs(g.y - f.y) < 30);
+        return [
+          [800, () => (me.x = f.x - 2)],
+          [950, () => (me.x = f.x - 1)],
+          [1100, () => {
+            me.x = f.x;
+            frOff.add(i);
+          }],
+          [1250, () => (me.x = f.x + 1)],
+          [4000, () => frOff.delete(i)],
+          [5000, () => j >= 0 && frOff.add(j)],
+        ];
+      },
+    },
+    toque: {
+      ms: 7000,
+      steps: () => {
+        ph = 'coleta';
+        el = 60_000;
+        z = { x: mx, y: my, r: 20, tr: 20 };
+        const w = wild(mx + 3, my - 1, 'mare');
+        const a = player(nextId++, 'Rival', mx - 3, my + 1, 'broto', 2, ['broto']);
+        const tap = (x: number, y: number) => (scene as unknown as { handleTap: (p: { worldX: number; worldY: number }) => void }).handleTap({ worldX: x, worldY: y });
+        return [
+          [400, () => tap((mx + 2.5) * 16, (my + 2.5) * 16)],
+          [2600, () => tap((w.x + 0.5) * 16, (w.y + 0.5) * 16 - 2)],
+          [4600, () => tap((a.x + 0.5) * 16, (a.y + 0.5) * 16 - 2)],
+          [5600, () => tap((mx - 1.5) * 16, (my - 1.5) * 16)],
+        ];
+      },
+    },
+    portal: {
+      ms: 5000,
+      steps: () => [
+        [300, () => spawnEv(mx + 2, my, 'brasa')],
+        [1300, () => spawnEv(mx - 2, my + 1, 'mare')],
+        [2300, () => spawnEv(mx + 1, my - 2, 'broto')],
+      ],
+    },
+    coroa: {
+      ms: 8000,
+      steps: () => {
+        const a = player(nextId++, 'Rival', mx + 3, my, 'brasa', 3, ['brasa']);
+        const b = player(nextId++, 'Nina', mx - 3, my + 1, 'mare', 3, ['mare']);
+        a.cr = 1;
+        crown = { x: a.x, y: a.y };
+        return [
+          [2500, () => {
+            delete a.cr;
+            b.cr = 1;
+            crown = { x: b.x, y: b.y };
+          }],
+          [4200, () => (crown = null)],
+          [4800, () => {
+            // O líder antigo sai da vista: a Coroa desce do céu no novo.
+            b.x = mx - 30;
+            delete b.cr;
+            a.cr = 1;
+          }],
+        ];
+      },
+    },
+    tudo: {
+      ms: 12000,
+      steps: () => {
+        moveMe(JX, JY);
+        const me = ents.get(ME)!;
+        setLook(me, 'quimera', 3, ['brasa', 'mare', 'broto']);
+        me.tr = 2;
+        hunger = 60_000;
+        walk(me, loop(JX - 1, JY - 1, 3, 2));
+        z = { x: JX - 12, y: JY, r: 15, tr: 11 };
+        crown = { x: JX + 4, y: JY - 3 };
+        const A = player(nextId++, 'A', JX + 4, JY - 3, 'brasa', 3, ['brasa']);
+        const B = player(nextId++, 'B', JX + 5, JY - 3, 'mare', 2, ['mare']);
+        const C = player(nextId++, 'C', JX - 5, JY + 3, 'quimera', 3, ['brasa', 'mare', 'broto']);
+        const Wc = wild(JX - 4, JY + 3, 'broto');
+        const D = player(nextId++, 'D', JX + 3, JY + 4, 'vapor', 3, ['brasa', 'mare']);
+        const E = player(nextId++, 'E', JX + 4, JY + 4, 'cinza', 2, ['brasa', 'broto']);
+        A.cr = 1;
+        A.tr = 3;
+        D.sh = 1;
+        const looks: [Form, Stage, Elem[]][] = [
+          ['broto', 1, ['broto']],
+          ['mangue', 3, ['mare', 'broto']],
+          ['neutro', 0, ['brasa']],
+          ['mare', 3, ['mare']],
+        ];
+        const walkersE = looks.map(([f, s, o], i) => {
+          const e = player(nextId++, `W${i}`, JX - 6 + i * 3, JY - 5, f, s, o);
+          walk(e, loop(e.x, e.y, 2, 2));
+          return e;
+        });
+        const steps: Step[] = [
+          [100, () => {
+            btEv(A, B);
+            btEv(C, Wc);
+            btEv(D, E);
+          }],
+          [300, () => (C.ch = Wc.ch = 1)],
+        ];
+        for (let t = 700; t < 11500; t += 700) {
+          const k = t / 700;
+          steps.push([t, () => hit(k & 1 ? A : B, k & 1 ? B : A, 6, 'ataque', k % 3 === 0 ? 1 : 0)]);
+          steps.push([t + 350, () => hit(k & 1 ? D : E, k & 1 ? E : D, 5, k & 1 ? 'defesa' : 'ataque', 0, k % 4 === 0 ? FX_CLASH : 0)]);
+          steps.push([t + 200, () => {
+            A.hp = A.mhp;
+            B.hp = B.mhp;
+            D.hp = D.mhp;
+            E.hp = E.mhp;
+          }]);
+        }
+        for (let t = 1500; t < 11500; t += 2000) {
+          steps.push([t, () => spawnEv(JX + 1 + ((t / 1000) % 3), JY + 2, (['brasa', 'mare', 'broto'] as const)[(t / 1000) % 3 | 0])]);
+          steps.push([t + 900, () => {
+            const w = [...ents.values()].find((e) => e.k === 'w' && e.b === undefined && e !== Wc);
+            if (w) eatEv(me, w, true);
+          }]);
+        }
+        for (let t = 2500; t < 11500; t += 3000) {
+          steps.push([t, () => {
+            const e = walkersE[((t / 3000) | 0) % walkersE.length];
+            if (e && e.s < 3) {
+              setLook(e, e.f, (e.s + 1) as Stage, e.o);
+              queue.push({ k: 'v', x: e.x, y: e.y, id: e.id, s: e.s });
+            }
+          }]);
+          steps.push([t + 1200, () => {
+            hit(C, Wc, 10, 'ataque', 1, FX_CHARGED);
+            Wc.hp = Wc.mhp;
+          }]);
+        }
+        return steps;
+      },
+    },
   };
 
   // ---------------------------------------------------------------- relógio
@@ -366,6 +752,27 @@ export function runFxDemo({ onMsg, scene, name }: Ctx): void {
     start(order[idx]);
   };
 
+  // Toque no demo: anda até o tile ou mira no bicho.
+  scene.onTap = (tile, id) => {
+    if (id !== null) target = id;
+    else if (tile) dest = [tile.x, tile.y];
+  };
+  const stepWalkers = () => {
+    for (const w of walkers) {
+      if (!ents.has(w.e.id) || w.e.b !== undefined) continue;
+      w.acc += 100;
+      if (w.acc < w.every) continue;
+      w.acc -= w.every;
+      w.i = (w.i + 1) % w.path.length;
+      [w.e.x, w.e.y] = w.path[w.i];
+    }
+    const me = ents.get(ME);
+    if (me && dest && (me.x !== dest[0] || me.y !== dest[1])) {
+      if (me.x !== dest[0]) me.x += Math.sign(dest[0] - me.x);
+      else me.y += Math.sign(dest[1] - me.y);
+    } else dest = null;
+  };
+
   const snapshot = (): Snap => {
     const me = ents.get(ME);
     const v = ents.get(view) ?? me;
@@ -382,7 +789,7 @@ export function runFxDemo({ onMsg, scene, name }: Ctx): void {
       al: [...ents.values()].filter((e) => e.k === 'p').length,
       ents: list,
       bs: [...battles.values()],
-      fr: map.fruits.map((_, i) => i),
+      fr: map.fruits.map((_, i) => i).filter((i) => !frOff.has(i)),
       me: {
         id: ME,
         x: me?.x ?? mx,
@@ -395,14 +802,14 @@ export function runFxDemo({ onMsg, scene, name }: Ctx): void {
         points: { brasa: 3, mare: 0, broto: 0 },
         trophies: 0,
         shieldMs: 0,
-        hungerMs: 0,
+        hungerMs: hunger,
         alive,
-        crown: false,
+        crown: !!me?.cr,
         battle: me?.b ?? null,
-        target: null,
+        target,
       },
       view: v?.id ?? null,
-      crown: null,
+      crown,
       lb: [],
       duel,
       ...(fx ? { fx } : {}),
@@ -414,6 +821,7 @@ export function runFxDemo({ onMsg, scene, name }: Ctx): void {
   window.setInterval(() => {
     const t = performance.now() - t0;
     while (steps.length && steps[0][0] <= t) steps.shift()![1]();
+    stepWalkers();
     el += 100;
     onMsg(snapshot());
     if (t >= SCENES[cur].ms) next();
@@ -428,6 +836,7 @@ export function runFxDemo({ onMsg, scene, name }: Ctx): void {
     },
     current: () => ({ scene: cur, t: performance.now() - t0 }),
     stats: () => scene.fxStats(),
+    resetPeaks: () => scene.resetFxPeaks(),
     scene,
   };
 }

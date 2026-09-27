@@ -25,6 +25,14 @@ export const FXC = {
   vapor: 0xb9a7ff,
   ash: 0xa8845c,
   mud: 0x3fb3a0,
+  ember: 0xffd27a,
+  petal: 0xff8fc8,
+  blossom: 0xffd6f0,
+  grass: 0x9be36b,
+  lava: 0xff8c42,
+  soot: 0x3b3947,
+  duelShade: 0xd08a9a,
+  night: 0x0b0716,
 } as const;
 
 /** Prisma da Quimera: troca de cor a cada 40 ms. */
@@ -72,3 +80,12 @@ export function lightTint(f: Form, o: Elem[]): number {
   if (f === 'neutro' || !e) return RAMP.neutro[0];
   return f === 'quimera' ? 0xffcf3f : ELEM_RAMP[e][0];
 }
+
+export function darkTint(f: Form, o: Elem[]): number {
+  const e = o[0];
+  if (f === 'neutro' || !e) return RAMP.neutro[2];
+  return f === 'quimera' ? 0x6d2a8f : ELEM_RAMP[e][2];
+}
+
+/** Frame do ícone do elemento no atlas 'fx'. */
+export const ELEM_FRAME: Record<Elem, string> = { brasa: 'flame', mare: 'drop', broto: 'leaf' };

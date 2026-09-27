@@ -80,10 +80,35 @@ export interface EntView {
   bob: number;
   burning: boolean;
   stepAt: number;
+  /** -1 olha para a esquerda (desenho original), 1 para a direita */
   dir: number;
   acc: number;
   burnT: number;
   burnFlashT: number;
+  // Passos: salto, squash de passo e respiração
+  hop: number;
+  wsx: number;
+  wsy: number;
+  stepN: number;
+  // Deslocamento e escala extras de efeito (comer, portal)
+  fxX: number;
+  fxY: number;
+  fxSx: number;
+  fxSy: number;
+  portalT0: number;
+  // Carga
+  chOn: boolean;
+  chT0: number;
+  chSlot: number;
+  chAcc: number;
+  chUsed: boolean;
+  // Escudo e Coroa
+  shOn: boolean;
+  shT0: number;
+  crOn: boolean;
+  /** acumuladores das auras contínuas */
+  auraAcc: number;
+  auraAcc2: number;
   /** some neste instante (lista dying) */
   dieAt: number;
   fadeMs: number;
@@ -103,15 +128,24 @@ export class FxParticle extends Phaser.GameObjects.Particles.Particle {
   mt = false;
   mx = 0;
   my = 0;
+  /** giro do moveTo (espiral) */
+  sw = 0;
   spin = 0;
 
   update(delta: number, step: number, processors: Phaser.GameObjects.Particles.ParticleProcessor[]): boolean {
     if (this.mt && this.delayCurrent <= 0 && this.lifeCurrent > 0) {
       const ls = Math.max(this.lifeCurrent, 16) / 1000;
-      this.velocityX = (this.mx - this.x) / ls;
-      this.velocityY = (this.my - this.y) / ls;
+      const dx = (this.mx - this.x) / ls;
+      const dy = (this.my - this.y) / ls;
+      this.velocityX = dx - dy * this.sw;
+      this.velocityY = dy + dx * this.sw;
     }
     const done = super.update(delta, step, processors);
+    // Com atraso, fica invisível até nascer.
+    if (this.delayCurrent > 0) {
+      this.alpha = 0;
+      return done;
+    }
     const t = this.lifeT;
     const seq = this.seq;
     if (seq) this.frame = seq[Math.min(seq.length - 1, (t * seq.length) | 0)];
@@ -152,8 +186,10 @@ export class BurstParams {
   mt = false;
   tx = 0;
   ty = 0;
+  sw = 0;
   spin = 0;
   delay = 0;
+  delayMin = 0;
 }
 
 const rnd = (a: number, b: number) => a + Math.random() * (b - a);
@@ -190,7 +226,18 @@ export class Fx {
   readonly ring: Phaser.GameObjects.Particles.ParticleEmitter;
   readonly ringAir: Phaser.GameObjects.Particles.ParticleEmitter;
   readonly wisp: Phaser.GameObjects.Particles.ParticleEmitter;
+  /** Carga: 4 emissores dedicados, um por bicho carregado */
+  readonly charge: Phaser.GameObjects.Particles.ParticleEmitter[] = [];
+  /** ambiente de bioma (registrados pelo módulo de bioma) */
+  amb: Phaser.GameObjects.Particles.ParticleEmitter[] = [];
+  /** chamado quando o tier muda */
+  onTier: (() => void) | null = null;
   private readonly events: Phaser.GameObjects.Particles.ParticleEmitter[];
+  // Instrumentação: picos de partículas vivas e quadros acima do teto
+  peak = 0;
+  peakEv = 0;
+  peakAmb = 0;
+  overCap = 0;
   /** worldView + 24 px, atualizado 1× por frame */
   readonly view = new Phaser.Geom.Rectangle();
   private aliveEv = 0;
@@ -229,7 +276,8 @@ export class Fx {
     this.ring = this.mk(7, NORMAL, 12);
     this.ringAir = this.mk(890, ADD, 8);
     this.wisp = this.mk(6, ADD, 24);
-    this.events = [this.spark, this.magic, this.ground, this.pixels, this.ring, this.ringAir];
+    for (let i = 0; i < 4; i++) this.charge.push(this.mk(890, ADD, 20));
+    this.events = [this.spark, this.magic, this.ground, this.pixels, this.ring, this.ringAir, ...this.charge];
     for (let i = 0; i < 24; i++) {
       this.imgs.push(scene.add.image(0, 0, 'fx', 'p1').setVisible(false).setDepth(890));
       this.imgBusy.push(false);
@@ -301,6 +349,16 @@ export class Fx {
     this.tier = t;
     this.wisp.maxAliveParticles = CAPS[t].zone;
     if (CAPS[t].zone === 0) this.wisp.killAll();
+    this.onTier?.();
+  }
+
+  /** Teto global de partículas vivas (ambiente + zona + eventos). */
+  get cap(): number {
+    return this.rm ? RM_CAP : CAPS[this.tier].total;
+  }
+
+  get ambCap(): number {
+    return this.rm ? 0 : CAPS[this.tier].amb;
   }
 
   /** Amostra o FPS a cada 1000 ms e desce/sobe o tier no modo automático. */
@@ -377,8 +435,9 @@ export class Fx {
     P.a1 = 0;
     P.mt = false;
     P.tx = P.ty = 0;
+    P.sw = 0;
     P.spin = 0;
-    P.delay = 0;
+    P.delay = P.delayMin = 0;
     return P;
   }
 
@@ -405,8 +464,9 @@ export class Fx {
       q.y += Math.round(rnd(-P.jit, P.jit));
     }
     q.life = q.lifeCurrent = rnd(P.lifeMin, P.lifeMax);
-    q.delayCurrent = P.delay ? rnd(0, P.delay) : 0;
+    q.delayCurrent = P.delay ? rnd(P.delayMin, P.delay) : 0;
     q.mt = P.mt;
+    q.sw = P.sw;
     q.mx = P.tx;
     q.my = P.ty;
     q.s0 = P.s0;
@@ -417,7 +477,7 @@ export class Fx {
     q.c1 = P.c1;
     q.c2 = P.c2;
     q.tint = q.c0;
-    q.alpha = P.a0;
+    q.alpha = q.delayCurrent > 0 ? 0 : P.a0;
     q.scaleX = q.scaleY = P.s0;
     q.spin = P.spin;
     q.angle = q.rotation = 0;
@@ -428,7 +488,7 @@ export class Fx {
    * multiplica pelo tier (×0,3 se é alheio e você luta) e corta pelo teto global.
    * O que envolve você (mine) nunca é cortado pelo teto.
    */
-  emit(em: Phaser.GameObjects.Particles.ParticleEmitter, n: number, x: number, y: number, mine: boolean, raw = false): number {
+  emit(em: Phaser.GameObjects.Particles.ParticleEmitter, n: number, x: number, y: number, mine: boolean, raw = false, frac = 1): number {
     if (!mine && !this.view.contains(x, y)) return 0;
     if (!raw) {
       n *= MULT[this.tier];
@@ -436,7 +496,10 @@ export class Fx {
       if (!mine && this.fighting) n *= 0.3;
       n = mine ? Math.max(1, Math.round(n)) : Math.round(n);
     }
-    if (!mine) n = Math.min(n, this.evCap - this.aliveEv);
+    // O que é seu usa o teto inteiro; o resto deixa 15% livres e corta pela prioridade (frac):
+    // pegadas 0,5, rastros 0,65, auras 0,8, batalhas alheias 1.
+    const cap = mine ? this.evCap : this.evCap * 0.85 * frac;
+    n = Math.min(n, Math.floor(cap - this.aliveEv));
     if (n <= 0) return 0;
     em.emitParticleAt(x, y, n);
     this.aliveEv += n;
@@ -456,13 +519,22 @@ export class Fx {
 
   /** Total de partículas vivas (para testes). */
   alive(): number {
-    let n = this.wisp.getAliveParticleCount();
-    for (const em of this.events) n += em.getAliveParticleCount();
+    return this.wisp.getAliveParticleCount() + this.aliveOf(this.events) + this.aliveOf(this.amb);
+  }
+
+  aliveOf(list: Phaser.GameObjects.Particles.ParticleEmitter[]): number {
+    let n = 0;
+    for (const em of list) n += em.getAliveParticleCount();
     return n;
+  }
+
+  resetPeaks(): void {
+    this.peak = this.peakEv = this.peakAmb = this.overCap = 0;
   }
 
   killAll(): void {
     for (const em of this.events) em.killAll();
+    for (const em of this.amb) em.killAll();
     this.wisp.killAll();
     for (let i = 0; i < this.imgs.length; i++) this.freeImage(this.imgs[i]);
     for (const s of this.nums) {
@@ -567,9 +639,16 @@ export class Fx {
     else this.flashRect.setAlpha(this.flashA * (1 - el / this.flashMs));
   }
 
-  /** Números e lampejo: chamado no fim do update. */
+  /** Números e instrumentação: chamado no fim do update. */
   postUpdate(now: number): void {
     this.updateNumbers(now);
+    const ev = this.aliveOf(this.events);
+    const amb = this.aliveOf(this.amb);
+    const total = ev + amb + this.wisp.getAliveParticleCount();
+    if (total > this.peak) this.peak = total;
+    if (ev > this.peakEv) this.peakEv = ev;
+    if (amb > this.peakAmb) this.peakAmb = amb;
+    if (total > this.cap) this.overCap++;
   }
 }
 
@@ -689,4 +768,57 @@ export interface FxHost {
   zoneWorld(): { x: number; y: number; r: number };
   /** contador de fillRect do groundG neste frame (teto 220) */
   groundBudget: number;
+  readonly overG: Phaser.GameObjects.Graphics;
+  readonly auraBackG: Phaser.GameObjects.Graphics;
+  /** contadores do overG (teto 160) e do auraBackG (teto 120) */
+  overBudget: number;
+  backBudget: number;
+  /** elemento do tile (0 brasa, 1 maré, 2 broto; -1 rocha ou fora) */
+  biomeAt(x: number, y: number): number;
+  /** jogador parado no tile */
+  playerAt(x: number, y: number): EntView | undefined;
+}
+
+// ---------------------------------------------------------------- desenho pixelado
+
+/** Elipse de pontos 1×1 (n pontos, com Math.round), dentro do teto do groundG. */
+export function dotEllipse(h: FxHost, cx: number, cy: number, rx: number, ry: number, n: number, rot: number, color: number, alpha: number): void {
+  if (rx < 0.5 || h.groundBudget + n > 220) return;
+  h.groundBudget += n;
+  const g = h.groundG;
+  g.fillStyle(color, alpha);
+  for (let i = 0; i < n; i++) {
+    const a = rot + (i / n) * Math.PI * 2;
+    g.fillRect(Math.round(cx + Math.cos(a) * rx), Math.round(cy + Math.sin(a) * ry), 1, 1);
+  }
+}
+
+/**
+ * Anel elíptico contínuo de 1 px desenhado por faixas de linha (4 fillRect por linha):
+ * metade esquerda na cor cl e direita na cr. Devolve quantos retângulos usou.
+ */
+export function spanEllipse(g: Phaser.GameObjects.Graphics, cx: number, cy: number, rx: number, ry: number, cl: number, cr: number, alpha: number, budget: number): number {
+  const R = Math.round(ry);
+  if (rx < 1 || R < 1) return 0;
+  const need = (R + 1) * 4;
+  if (need > budget) return 0;
+  const x0 = Math.round(cx);
+  const y0 = Math.round(cy);
+  let prev = Math.round(rx);
+  // Da linha do meio (i = 0) até o topo/base (i = R).
+  for (let i = 0; i <= R; i++) {
+    const k = i < R ? (i + 1) / (R + 0.5) : 1;
+    const next = i < R ? Math.round(rx * Math.sqrt(Math.max(0, 1 - k * k))) : 0;
+    // Na última linha a faixa fecha o topo/base até o centro.
+    const wl = i === R ? prev + 1 : Math.max(1, prev - next);
+    const wr = i === R ? prev : wl;
+    g.fillStyle(cl, alpha);
+    g.fillRect(x0 - prev, y0 - i, wl, 1);
+    if (i) g.fillRect(x0 - prev, y0 + i, wl, 1);
+    g.fillStyle(cr, alpha);
+    g.fillRect(x0 + prev - wr + 1, y0 - i, wr, 1);
+    if (i) g.fillRect(x0 + prev - wr + 1, y0 + i, wr, 1);
+    prev = next;
+  }
+  return need;
 }
