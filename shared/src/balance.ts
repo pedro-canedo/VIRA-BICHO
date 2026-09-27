@@ -103,7 +103,7 @@ export const BALANCE = {
     minPlayers: 8,
     maxPlayers: 16,
     waitMs: 30_000,
-    maxRooms: 4,
+    maxRooms: 10,
     endLingerMs: 20_000,
   },
 

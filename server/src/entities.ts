@@ -2,6 +2,8 @@ import type { Action, Elem, HistoryItem, ServerMsg, Stage, TypePoints, Vec } fro
 
 export interface Conn {
   send(msg: ServerMsg): void;
+  /** Chave de rate limit (IP ou /64). Opcional: o Lobby usa 'anon' sem ela. */
+  key?: string;
 }
 
 export interface BotBrain {
@@ -36,6 +38,10 @@ export interface Player extends EntityBase {
   target: number | null;
   targetSeenAt: Vec | null;
   repathAt: number;
+  /** Destino pedido pelo humano, aplicado no próximo tick (no máximo 1 A* por tick). */
+  pendingDest: Vec | null;
+  /** Último destino de moveTo, para não refazer o A* com o mesmo pedido. */
+  lastDest: Vec | null;
   lastToastAt: number;
   eliminatedBy: string | null;
   killerId: number | null;

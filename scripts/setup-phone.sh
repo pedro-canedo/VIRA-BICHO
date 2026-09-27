@@ -15,10 +15,15 @@ cat > "$SV/run" <<'RUN'
 #!/data/data/com.termux/files/usr/bin/sh
 cd "$HOME/apps/vira-bicho"
 export PORT=3000 NODE_ENV=production
-exec node server.mjs 2>&1
+# Teto de heap: o Node cai e o runit reinicia antes que o lmkd do Android mate o Termux inteiro.
+exec node --max-old-space-size=256 server.mjs 2>&1
 RUN
 chmod +x "$SV/run"
 ln -sf "$PREFIX/share/termux-services/svlogger" "$SV/log/run"
+# Rotação do log (svlogd): 5 arquivos de até 5 MB, para um flood de log não apagar o histórico.
+LOGDIR="$PREFIX/var/log/sv/vira-bicho"
+mkdir -p "$LOGDIR"
+printf 's5000000\nn5\n' > "$LOGDIR/config"
 # Fica parado até o primeiro deploy (o deploy remove este arquivo).
 [ -f "$HOME/apps/vira-bicho/server.mjs" ] || touch "$SV/down"
 echo "Serviço pronto em $SV"

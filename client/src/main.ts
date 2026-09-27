@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { decodeTiles, speciesName, type ServerMsg } from '@vb/shared';
+import { lostMessage } from './closeReasons';
 import { Net } from './net';
 import { GameScene } from './scenes/GameScene';
 import { BattleUi } from './ui/battle';
@@ -29,8 +30,8 @@ let battle: BattleUi | null = null;
 let deadEl: HTMLElement | null = null;
 let lastReq: PlayRequest | null = null;
 
-const net = new Net(onMsg, () => {
-  if (screen === 'lobby' || screen === 'game') toMenu('A conexão caiu. Tente de novo.');
+const net = new Net(onMsg, (code) => {
+  if (screen === 'lobby' || screen === 'game') toMenu(lostMessage(code));
 });
 
 scene.onTap = (tile, id) => {

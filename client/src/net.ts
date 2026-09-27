@@ -7,7 +7,7 @@ export class Net {
 
   constructor(
     private onMsg: (msg: ServerMsg) => void,
-    private onLost: () => void,
+    private onLost: (code: number) => void,
   ) {}
 
   private url(): string {
@@ -27,12 +27,13 @@ export class Net {
       };
       ws.onerror = () => {
         this.opening = null;
-        reject(new Error('Não foi possível conectar ao servidor.'));
+        // O navegador não expõe o status do handshake (403/429/503).
+        reject(new Error('Não foi possível conectar ao servidor. Tente de novo em instantes.'));
       };
-      ws.onclose = () => {
+      ws.onclose = (ev) => {
         if (this.ws === ws) {
           this.ws = null;
-          this.onLost();
+          this.onLost(ev.code);
         }
       };
       ws.onmessage = (ev) => {

@@ -1,5 +1,5 @@
 import type { Fruit } from './mapgen';
-import type { Action, Elem, Form, Look, Phase, Stage, TypePoints } from './types';
+import { ACTIONS, type Action, type Elem, type Form, type Look, type Phase, type Stage, type TypePoints } from './types';
 
 // ---------- Cliente → servidor ----------
 
@@ -10,6 +10,43 @@ export type ClientMsg =
   | { t: 'act'; a: Action }
   | { t: 'startnow' }
   | { t: 'leave' };
+
+export const PROTOCOL_LIMITS = { nameMaxRaw: 64, codeMaxRaw: 8, coordAbs: 1024 } as const;
+
+const MODES = ['quick', 'create', 'join'] as const;
+const coord = (v: unknown): v is number => Number.isSafeInteger(v) && Math.abs(v as number) <= PROTOCOL_LIMITS.coordAbs;
+
+/**
+ * Valida uma mensagem do cliente vinda do JSON. Devolve sempre um objeto novo só com os campos
+ * conhecidos (nunca o objeto recebido), ou null se algo estiver fora do formato.
+ */
+export function parseClientMsg(v: unknown): ClientMsg | null {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const m = v as Record<string, unknown>;
+  switch (m.t) {
+    case 'hello': {
+      const { name, mode, code } = m;
+      if (typeof name !== 'string' || name.length > PROTOCOL_LIMITS.nameMaxRaw) return null;
+      if (!MODES.includes(mode as (typeof MODES)[number])) return null;
+      if (code !== undefined && (typeof code !== 'string' || code.length > PROTOCOL_LIMITS.codeMaxRaw)) return null;
+      const out: ClientMsg = { t: 'hello', name, mode: mode as (typeof MODES)[number] };
+      if (code !== undefined) out.code = code;
+      return out;
+    }
+    case 'move':
+      return coord(m.x) && coord(m.y) ? { t: 'move', x: m.x, y: m.y } : null;
+    case 'target':
+      return Number.isSafeInteger(m.id) && (m.id as number) > 0 ? { t: 'target', id: m.id as number } : null;
+    case 'act':
+      return ACTIONS.includes(m.a as Action) ? { t: 'act', a: m.a as Action } : null;
+    case 'startnow':
+      return { t: 'startnow' };
+    case 'leave':
+      return { t: 'leave' };
+    default:
+      return null;
+  }
+}
 
 // ---------- Servidor → cliente ----------
 

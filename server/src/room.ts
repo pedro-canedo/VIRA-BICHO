@@ -31,6 +31,7 @@ import {
 } from '@vb/shared';
 import { botChoose, botThink, makeBrain, wildChoose } from './bots';
 import type { Battle, Conn, Entity, Player, Side, Wild } from './entities';
+import { SECURITY } from './security';
 
 const BOT_NAMES = [
   'Farofa', 'Paçoca', 'Cuscuz', 'Tapioca', 'Pitanga', 'Jambo', 'Caju', 'Pipoca', 'Mandioca', 'Jabuti',
@@ -69,6 +70,8 @@ export class Room {
   abandoned = false;
   /** Finalistas do Duelo Final (quando começou). */
   duel: { a: Player; b: Player } | null = null;
+  /** Quantas buscas A* de jogadores já rodaram (métrica e testes). */
+  pathfinds = 0;
 
   private nextId = 1;
   private lastLobbyAt = 0;
@@ -77,12 +80,17 @@ export class Room {
   private crownPingUntil = 0;
   private lastCrownFeedAt = -Infinity;
 
+  /** Folga (tiles) além do raio de visão aceita na mira pedida por humano. */
+  readonly targetSlackTiles: number;
+
   constructor(
     readonly code: string,
     readonly isPrivate: boolean,
     readonly seed: number = randomSeed(),
+    opts: { targetSlackTiles?: number } = {},
   ) {
     this.rng = new Rng(seed ^ 0x5bd1e995);
+    this.targetSlackTiles = opts.targetSlackTiles ?? SECURITY.game.targetSlackTiles;
   }
 
   get elapsed(): number {
@@ -197,6 +205,8 @@ export class Room {
       target: null,
       targetSeenAt: null,
       repathAt: 0,
+      pendingDest: null,
+      lastDest: null,
       lastToastAt: 0,
       eliminatedBy: null,
       killerId: null,
@@ -278,28 +288,46 @@ export class Room {
   moveTo(p: Player, x: number, y: number): void {
     if (!p.alive || p.battle || this.state !== 'play') return;
     p.target = null;
+    p.lastDest = { x, y };
     const dest = nearestWalkable(this.map, x, y);
+    this.pathfinds++;
     p.path = findPath(this.map, p, dest) ?? [];
   }
 
-  setTarget(p: Player, id: number): void {
-    if (!p.alive || p.battle || this.state !== 'play' || id === p.id) return;
+  /** Movimento pedido por humano: só guarda o destino; o A* roda uma vez no próximo tick. */
+  commandMove(p: Player, x: number, y: number): void {
+    if (!p.alive || p.battle || this.state !== 'play') return;
+    p.pendingDest = { x, y };
+  }
+
+  /** Mira pedida por humano: só em entidades dentro do raio de visão (com folga), contra radar por id. */
+  commandTarget(p: Player, id: number): void {
     const t = this.entity(id);
-    if (!t) return;
+    if (!t || chebyshev(p, t) > BALANCE.viewRadius + this.targetSlackTiles) return;
+    // Alvo recusado não cancela o movimento pedido no mesmo tick.
+    if (this.setTarget(p, id)) p.pendingDest = null;
+  }
+
+  /** Mira numa entidade; devolve false (sem mudar nada) se o alvo não vale. */
+  setTarget(p: Player, id: number): boolean {
+    if (!p.alive || p.battle || this.state !== 'play' || id === p.id) return false;
+    const t = this.entity(id);
+    if (!t) return false;
     if (t.kind === 'wild' && t.battle) {
       this.toast(p, 'Esse bicho já está batalhando com outro jogador.', true);
-      return;
+      return false;
     }
     if (t.kind === 'player') {
-      if (!t.alive) return;
+      if (!t.alive) return false;
       if (this.phase === 'coleta') {
         this.toast(p, 'Batalhas entre jogadores só começam na Caçada (2:00).', true);
-        return;
+        return false;
       }
     }
     p.target = id;
     p.targetSeenAt = null;
     p.repathAt = 0;
+    return true;
   }
 
   act(p: Player, a: Action): void {
@@ -328,6 +356,7 @@ export class Room {
     for (const p of this.players.values()) {
       if (p.alive && p.bot && !p.battle && now >= p.bot.nextThinkAt) botThink(this, p, now);
     }
+    this.applyCommands();
     this.updateTargets(now);
     this.moveEntities(now);
     this.updateBattles(now);
@@ -338,6 +367,18 @@ export class Room {
     if ((this.phase === 'cacada' || this.phase === 'final') && this.alivePlayers().length === 2) this.startDuel();
     this.checkEnd();
     if (this.state === 'play') this.sendSnapshots();
+  }
+
+  /** Aplica os destinos pedidos pelos humanos neste tick (o último pedido vence). */
+  private applyCommands(): void {
+    for (const p of this.players.values()) {
+      const d = p.pendingDest;
+      if (!d) continue;
+      p.pendingDest = null;
+      const same = p.lastDest && p.lastDest.x === d.x && p.lastDest.y === d.y;
+      if (same && p.target === null && p.path.length > 0) continue;
+      this.moveTo(p, d.x, d.y);
+    }
   }
 
   private updatePhase(): void {
@@ -386,6 +427,7 @@ export class Room {
       }
       const moved = !p.targetSeenAt || p.targetSeenAt.x !== t.x || p.targetSeenAt.y !== t.y;
       if (moved && now >= p.repathAt) {
+        this.pathfinds++;
         p.path = findPath(this.map, p, t) ?? [];
         p.targetSeenAt = { x: t.x, y: t.y };
         p.repathAt = now + 400;
