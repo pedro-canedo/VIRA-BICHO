@@ -110,7 +110,7 @@ export class ZoneFx {
     const phi = rm ? 0 : ((now / 1000) * 12) / R;
     const kFrom = Math.ceil((a0 - phi) / step);
     const kTo = Math.floor((a1 - phi) / step);
-    const blink = duel ? (Math.floor(now / 300) & 1 ? 1 : 0.35) : 1;
+    const blink = duel && !rm && !(Math.floor(now / 300) & 1) ? 0.35 : 1;
     for (let k = kFrom; k <= kTo; k++) {
       const a = k * step + phi;
       const x = Math.round(cx + Math.cos(a) * R) - 1;
@@ -266,6 +266,12 @@ export class ZoneFx {
       P.spMax = 5;
       P.lifeMin = P.lifeMax = 400;
       fx.emit(fx.spark, 2, v.x, v.y - 2, mine, true);
+    }
+    // Com reduced-motion: um único tint ao entrar na tempestade, sem repetir.
+    if (fx.rm) {
+      if (v.burnFlashT === 0) flash(v, FXC.magenta, BURN_PAT, now, true);
+      v.burnFlashT = 1;
+      return;
     }
     v.burnFlashT += delta;
     if (v.burnFlashT >= 600) {

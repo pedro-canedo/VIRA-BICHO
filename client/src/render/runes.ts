@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import type { Elem, Form, FxEvent, Stage } from '@vb/shared';
 import { creaturePixels, drawCreature, lookKey } from './creature';
-import { flash, squash, type EntView, type FxHost } from './fx';
+import { PAT_RM, flash, squash, type EntView, type FxHost } from './fx';
 import { FORM_TINT, FXC, RAMP, bodyTint, lightTint } from './fxpalette';
 import { TILE } from './map';
 
@@ -147,8 +147,9 @@ export class Runes {
     const popAt = full ? 600 : 330;
     // A textura antiga fica presa até o estouro.
     v.texSwapAt = now + popAt;
-    v.texPop = 1.5;
-    flash(v, 0xffffff, full ? SIL_FULL : SIL_SHORT, now, false);
+    // Com reduced-motion: sem silhueta branca nem pop; um tint de 120 ms no estouro.
+    v.texPop = fx.rm ? 1 : 1.5;
+    if (!fx.rm) flash(v, 0xffffff, full ? SIL_FULL : SIL_SHORT, now, false);
     if (!c) {
       // 4º simultâneo: só as partículas.
       const P = fx.reset();
@@ -267,7 +268,7 @@ export class Runes {
     }
     if (c.mode === Mode.Inverse) return;
     // Silhueta alternando textura antiga e nova até o estouro.
-    if (v && el < c.popAt) {
+    if (v && el < c.popAt && !fx.rm) {
       const swaps = c.mode === Mode.Full ? SWAPS_FULL : SWAPS_SHORT;
       let e = el;
       let i = 0;
@@ -303,6 +304,7 @@ export class Runes {
     }
     if (!c.popped && el >= c.popAt) {
       c.popped = true;
+      if (v && fx.rm) flash(v, 0xffffff, PAT_RM, now, true);
       this.burst(c, v, now);
     }
     if (c.final && el >= c.popAt && el < c.popAt + 500) {
@@ -375,10 +377,12 @@ export class Runes {
     P.lifeMin = P.lifeMax = 450;
     P.a1 = 0.5;
     fx.emit(fx.ground, 10, v.x, v.y - 2, mine);
-    v.blinkT0 = now;
-    v.blinkUntil = now + 360;
+    if (!fx.rm) {
+      v.blinkT0 = now;
+      v.blinkUntil = now + 360;
+    }
     v.texSwapAt = now + swapMs;
-    v.texPop = 0.6;
+    v.texPop = fx.rm ? 1 : 0.6;
     if (zone) {
       fx.number('m', '-1', v.x, v.y - 6, 1, 0, v.data.id, now);
       if (mine) this.host.addTrauma(0.3);
@@ -603,7 +607,7 @@ export class Runes {
       v.hidden = true;
       if (e.r === 'd') squash(v, 0.01, 1, 240, 1000, 0, now, 3);
       else {
-        flash(v, 0xffffff, WHITE_180, now, false);
+        flash(v, 0xffffff, WHITE_180, now, fx.rm);
         squash(v, 0.7, 1.3, 180, 1000, 0, now, 3);
       }
     }

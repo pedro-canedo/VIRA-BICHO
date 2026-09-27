@@ -637,7 +637,7 @@ export function runFxDemo({ onMsg, scene, name }: Ctx): void {
       ],
     },
     coroa: {
-      ms: 8000,
+      ms: 9500,
       steps: () => {
         const a = player(nextId++, 'Rival', mx + 3, my, 'brasa', 3, ['brasa']);
         const b = player(nextId++, 'Nina', mx - 3, my + 1, 'mare', 3, ['mare']);
@@ -656,6 +656,9 @@ export function runFxDemo({ onMsg, scene, name }: Ctx): void {
             delete b.cr;
             a.cr = 1;
           }],
+          // O dono sai da vista e volta: sem voo, a Coroa não trocou de dono.
+          [6500, () => (a.x = mx + 30)],
+          [7500, () => (a.x = mx + 3)],
         ];
       },
     },
@@ -810,7 +813,8 @@ export function runFxDemo({ onMsg, scene, name }: Ctx): void {
       },
       view: v?.id ?? null,
       crown,
-      lb: [],
+      // Placar com todos os jogadores (o servidor manda o lb inteiro, com a Coroa, mesmo fora da vista).
+      lb: [...ents.values()].filter((e) => e.k === 'p').map((e) => ({ id: e.id, n: e.n ?? '', s: e.s, f: e.f, ...(e.cr ? { cr: 1 as const } : {}) })),
       duel,
       ...(fx ? { fx } : {}),
     };

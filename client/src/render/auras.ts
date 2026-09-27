@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import type { EntSnap, Snap } from '@vb/shared';
 import { dotEllipse, flash, type EntView, type FxHost } from './fx';
+import { crownOwnerOf } from './fxrules';
 import { ELEM_RAMP, FORM_TINT, FXC, PRISM, bodyTint, darkTint, prismAt } from './fxpalette';
 import { TILE } from './map';
 
@@ -147,10 +148,9 @@ export class Auras {
 
   // ---------------------------------------------------------------- Coroa
 
-  /** Chamado depois das entidades: detecta a troca de dono da Coroa. */
+  /** Chamado depois das entidades: detecta a troca de dono da Coroa (pelo placar, não por quem está à vista). */
   onSnap(s: Snap, now: number, skip: boolean): void {
-    let owner = -1;
-    for (const e of s.ents) if (e.cr) owner = e.id;
+    const owner = crownOwnerOf(s.lb);
     if (owner !== this.crownOwner) {
       if (!skip && owner >= 0 && !this.crownStolen) this.crownFlight(this.crownOwner, owner, now);
       this.crownOwner = owner;
@@ -271,7 +271,7 @@ export class Auras {
         const s = Math.sin(a);
         this.dot(s < 0, Math.round(x + Math.cos(a) * 9), Math.round(y - 13 + s * 3), 2, FXC.gold, 1);
       }
-      if (now % 500 < 250) this.star(false, Math.round(x), Math.round(y - 21), FXC.ghost, 1);
+      if (rm || now % 500 < 250) this.star(false, Math.round(x), Math.round(y - 21), FXC.ghost, 1);
     }
     if (v.shOn || now - v.shT0 < 120) this.shield(v, x, y, now);
     if (hunger && mine && !rm) {

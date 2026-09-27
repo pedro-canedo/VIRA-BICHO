@@ -310,7 +310,7 @@ export class Critters {
       w.koUntil = 0;
       w.dieAt = now + 340;
       w.fadeMs = 0;
-      flash(w, 0xffffff, WHITE_120, now, false);
+      flash(w, 0xffffff, WHITE_120, now, fx.rm);
     }
     // 14 motes do elemento espiralam até o jogador em 450 ms.
     const r = ELEM_RAMP[ev.e];

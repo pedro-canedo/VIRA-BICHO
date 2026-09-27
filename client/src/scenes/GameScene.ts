@@ -81,6 +81,7 @@ export class GameScene extends Phaser.Scene implements FxHost {
   create(): void {
     this.cameras.main.setBackgroundColor('#0b0716');
     this.fx = new Fx(this);
+    this.fx.blockers = (out, max) => this.numberBlockers(out, max);
     this.zoneG = this.add.graphics().setDepth(5);
     this.groundG = this.add.graphics().setDepth(7);
     this.auraBackG = this.add.graphics().setDepth(9);
@@ -348,6 +349,7 @@ export class GameScene extends Phaser.Scene implements FxHost {
       acc: 0,
       burnT: 0,
       burnFlashT: 0,
+      barOn: false,
       hop: 0,
       wsx: 1,
       wsy: 1,
@@ -577,7 +579,7 @@ export class GameScene extends Phaser.Scene implements FxHost {
   }
 
   private place(v: EntView, now: number, frozen: boolean): void {
-    const p = stepView(v, now, frozen);
+    const p = stepView(v, now, frozen, this.fx.rm);
     const sc = v.base * p;
     v.img
       .setPosition(v.x + v.ox + v.fxX, v.y + v.hop + v.oy + v.fxY)
@@ -585,6 +587,33 @@ export class GameScene extends Phaser.Scene implements FxHost {
       .setDepth(10 + v.y / TILE)
       .setVisible(!v.hidden || now < v.dieAt - 20);
   }
+  /** Nomes e barras de HP à vista, que os números de dano não cobrem. */
+  private numberBlockers(out: number[], max: number): number {
+    let n = 0;
+    const view = this.fx.view;
+    for (const v of this.ents.values()) {
+      if (n + 2 > max) break;
+      if (!view.contains(v.x, v.y)) continue;
+      const l = v.label;
+      if (l?.visible && l.text) {
+        const hw = l.width / 2;
+        out[n * 4] = l.x - hw;
+        out[n * 4 + 1] = l.y - l.height;
+        out[n * 4 + 2] = l.x + hw;
+        out[n * 4 + 3] = l.y;
+        n++;
+      }
+      if (v.barOn) {
+        out[n * 4] = v.x - 9;
+        out[n * 4 + 1] = v.y + 6;
+        out[n * 4 + 2] = v.x + 9;
+        out[n * 4 + 3] = v.y + 13;
+        n++;
+      }
+    }
+    return n;
+  }
+
   /** Empurra para cima os nomes que se sobrepõem (bichos colados numa batalha, por exemplo). */
   private separateLabels(): void {
     const labs = this.labs;
@@ -693,13 +722,16 @@ export class GameScene extends Phaser.Scene implements FxHost {
       if (v.ghostHp > v.shownHp && now >= v.ghostHoldUntil) v.ghostHp = Math.max(v.shownHp, v.ghostHp - (mhp * delta) / 450);
       if (v.ghostHp < v.shownHp) v.ghostHp = v.shownHp;
       const showBar = e.k === 'p' || v.shownHp < mhp || v.ghostHp > v.shownHp || e.b !== undefined;
-      if (!showBar || !this.fx.view.contains(v.x, v.y)) continue;
+      v.barOn = showBar && this.fx.view.contains(v.x, v.y);
+      if (!v.barOn) continue;
       this.overBudget += 4;
       const pct = Math.max(0, v.shownHp / mhp);
       const thick = now < v.thickUntil ? 1 : 0;
       const bx = v.x - 8;
       const by = v.y + 8 - thick;
-      if (v.burning && Math.floor(now / 150) & 1) {
+      // Com reduced-motion o contorno e a barra de HP baixo ficam fixos, sem piscar.
+      const rm = this.fx.rm;
+      if (v.burning && (rm || Math.floor(now / 150) & 1)) {
         g.fillStyle(FXC.magenta, 1);
         g.fillRect(bx - 1, by - 1, 18, 5 + thick);
       }
@@ -709,7 +741,7 @@ export class GameScene extends Phaser.Scene implements FxHost {
         g.fillStyle(FXC.ghost, 1);
         g.fillRect(bx + 0.5, by + 0.5, 15 * Math.min(1, v.ghostHp / mhp), 2 + thick);
       }
-      const blink = pct <= 0.25 && Math.floor(now / 250) & 1 ? 0.4 : 1;
+      const blink = !rm && pct <= 0.25 && Math.floor(now / 250) & 1 ? 0.4 : 1;
       g.fillStyle(pct > 0.5 ? 0x58e07a : pct > 0.25 ? 0xffcf3f : 0xff4f6d, blink);
       g.fillRect(bx + 0.5, by + 0.5, 15 * pct, 2 + thick);
     }

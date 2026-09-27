@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import type { EntSnap } from '@vb/shared';
 import { buildFxAtlas } from './fxatlas';
+import { clearBottom } from './fxrules';
 
 /**
  * Diretor de efeitos do mundo: emissores criados uma vez, orçamento de partículas
@@ -79,6 +80,8 @@ export interface EntView {
   /** balanço atual (fica parado no hitstop) */
   bob: number;
   burning: boolean;
+  /** barra de HP desenhada no último frame (os números desviam dela) */
+  barOn: boolean;
   stepAt: number;
   /** -1 olha para a esquerda (desenho original), 1 para a direita */
   dir: number;
@@ -232,6 +235,9 @@ export class Fx {
   amb: Phaser.GameObjects.Particles.ParticleEmitter[] = [];
   /** chamado quando o tier muda */
   onTier: (() => void) | null = null;
+  /** Caixas que os números não cobrem (nomes e barras): escreve [esq, topo, dir, base] em out e devolve quantas. */
+  blockers: ((out: number[], max: number) => number) | null = null;
+  private boxes: number[] = new Array<number>(4 * 72).fill(0);
   private readonly events: Phaser.GameObjects.Particles.ParticleEmitter[];
   // Instrumentação: picos de partículas vivas e quadros acima do teto
   peak = 0;
@@ -563,27 +569,40 @@ export class Fx {
     return null;
   }
 
-  /** Número de dano pixelado (pool de 8; esgotado, recicla o mais antigo). */
+  /**
+   * Número de dano pixelado (pool de 8; esgotado, recicla o mais antigo). Nasce em y−16
+   * com escala 2 e sobe até não encostar em nome, barra de HP ou outro número vivo.
+   */
   number(font: string, text: string, x: number, y: number, sc: number, drift: number, id: number, now: number): void {
     let slot: NumSlot | null = null;
     let oldest: NumSlot = this.nums[0];
-    let stack = 0;
     for (const s of this.nums) {
       if (!s.on) slot ??= s;
-      else {
-        if (s.t0 < oldest.t0) oldest = s;
-        if (s.id === id && now - s.t0 < 300) stack++;
-      }
+      else if (s.t0 < oldest.t0) oldest = s;
     }
     slot ??= oldest;
+    slot.on = false;
+    const t = slot.t.setFont(`dmg-${font}`).setText(text).setScale(2);
+    const bx = this.boxes;
+    const max = bx.length / 4 - this.nums.length;
+    let n = this.blockers ? Math.min(max, this.blockers(bx, max)) : 0;
+    for (const o of this.nums) {
+      if (!o.on) continue;
+      const hw = o.t.width / 2;
+      bx[n * 4] = o.t.x - hw;
+      bx[n * 4 + 1] = o.t.y - o.t.height;
+      bx[n * 4 + 2] = o.t.x + hw;
+      bx[n * 4 + 3] = o.t.y;
+      n++;
+    }
     slot.on = true;
     slot.t0 = now;
     slot.x = Math.round(x);
-    slot.y = Math.round(y - 16 - stack * 7);
+    slot.y = Math.round(clearBottom(slot.x, t.width / 2, Math.round(y - 16), t.height, bx, n));
     slot.dx = drift;
     slot.sc = sc;
     slot.id = id;
-    slot.t.setFont(`dmg-${font}`).setText(text).setScale(sc + 1).setAlpha(1).setVisible(true).setPosition(slot.x, slot.y);
+    t.setAlpha(1).setVisible(true).setPosition(slot.x, slot.y);
   }
 
   private updateNumbers(now: number): void {
@@ -692,7 +711,7 @@ const QO = Phaser.Math.Easing.Quadratic.Out;
 const BO = Phaser.Math.Easing.Back.Out;
 
 /** Calcula ox/oy, sx/sy, escala de pop, alpha e tint da EntView neste instante. Devolve a escala de pop. */
-export function stepView(v: EntView, now: number, frozen: boolean): number {
+export function stepView(v: EntView, now: number, frozen: boolean, rm = false): number {
   // Empurrão
   const ne = now - v.nT0;
   if (ne < 0 || ne >= v.nOut + v.nBack) {
@@ -702,7 +721,7 @@ export function stepView(v: EntView, now: number, frozen: boolean): number {
     v.ox = Math.round(v.nx * k);
     v.oy = Math.round(v.ny * k);
   }
-  if (v.koUntil > now) v.ox += (Math.floor(now / 50) & 1) * 2 - 1;
+  if (v.koUntil > now && !rm) v.ox += (Math.floor(now / 50) & 1) * 2 - 1;
   // Squash (congelado pelo hitstop)
   if (!frozen) {
     const qe = now - v.qT0;
@@ -721,7 +740,7 @@ export function stepView(v: EntView, now: number, frozen: boolean): number {
   if (pe >= 0 && pe < v.popMs) p = v.popFrom + (1 - v.popFrom) * BO(pe / v.popMs);
   // Alpha piscando (desmoronar): 1 → 0,4 três vezes em 360 ms
   let a = v.alpha;
-  if (now < v.blinkUntil) a *= 1 - 0.6 * (((now - v.blinkT0) % 120) / 120);
+  if (now < v.blinkUntil && !rm) a *= 1 - 0.6 * (((now - v.blinkT0) % 120) / 120);
   if (v.dieAt > 0 && v.fadeMs > 0) a *= Math.max(0, Math.min(1, (v.dieAt - now) / v.fadeMs));
   v.img.setAlpha(a);
   // Lampejo FILL
