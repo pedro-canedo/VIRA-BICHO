@@ -2,6 +2,7 @@ import { ELEMS, formOf, type Look, type ServerMsg, type Stage } from '@vb/shared
 import { creatureImg } from '../render/creature';
 import { showBestiary } from './bestiary';
 import { clearUi, fmtTime, h, mount } from './dom';
+import { refreshFxTier } from './fxcanvas';
 import { showHelp } from './help';
 
 export interface PlayRequest {
@@ -20,6 +21,62 @@ function randomLook(): Look {
 }
 
 let previewTimer = 0;
+
+const FX_TIERS = [
+  ['auto', 'Auto'],
+  ['alto', 'Alto'],
+  ['medio', 'Médio'],
+  ['baixo', 'Baixo'],
+] as const;
+
+function readPref(key: string, fallback: string): string {
+  try {
+    return localStorage.getItem(key) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writePref(key: string, v: string): void {
+  try {
+    localStorage.setItem(key, v);
+  } catch {
+    // sem armazenamento: vale só nesta sessão
+  }
+}
+
+/** Seletor de qualidade dos efeitos ('vb.fx', lido pelo mundo) e chave da vibração ('vb.vibe'). */
+function optionsCard(): HTMLElement {
+  let fx = readPref('vb.fx', 'auto');
+  const tierBtns = FX_TIERS.map(([v, label]) =>
+    h(
+      'button',
+      {
+        class: `btn${fx === v ? ' on' : ''}`,
+        onclick: () => {
+          fx = v;
+          writePref('vb.fx', v);
+          refreshFxTier();
+          tierBtns.forEach((b, i) => b.classList.toggle('on', FX_TIERS[i][0] === v));
+        },
+      },
+      label,
+    ),
+  );
+  const vibeLabel = () => `📳 Vibração: ${readPref('vb.vibe', '1') === '0' ? 'não' : 'sim'}`;
+  const vibe: HTMLButtonElement = h(
+    'button',
+    {
+      class: 'btn',
+      onclick: () => {
+        writePref('vb.vibe', readPref('vb.vibe', '1') === '0' ? '1' : '0');
+        vibe.textContent = vibeLabel();
+      },
+    },
+    vibeLabel(),
+  );
+  return h('div', { class: 'card opts' }, h('div', { class: 'label', style: 'margin:0;width:100%' }, 'Efeitos'), h('div', { class: 'seg' }, ...tierBtns), vibe);
+}
 
 export function showMenu(onPlay: (req: PlayRequest) => void, error = ''): void {
   clearUi();
@@ -73,6 +130,7 @@ export function showMenu(onPlay: (req: PlayRequest) => void, error = ''): void {
           err,
         ),
         h('div', { class: 'row' }, h('button', { class: 'btn', onclick: showHelp }, 'Como jogar'), h('button', { class: 'btn', onclick: showBestiary }, 'Bestiário')),
+        optionsCard(),
         h('p', { class: 'tagline small' }, 'Partidas de ~5 min com 8 a 16 bichos. Faltou gente? Bots completam a arena.'),
         h('p', { class: 'tagline small' }, '📱 Este servidor roda num celular reaproveitado.'),
       ),

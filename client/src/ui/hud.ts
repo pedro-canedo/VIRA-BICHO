@@ -1,10 +1,12 @@
-import { BALANCE, FORM_LABEL, STAGE_LABEL, speciesName, type Fruit, type Snap } from '@vb/shared';
+import { BALANCE, FORM_LABEL, STAGE_LABEL, speciesName, type Elem, type Fruit, type Snap } from '@vb/shared';
 import { creatureImg, lookKey } from '../render/creature';
 import { renderMinimap } from '../render/map';
 import { ELEM_TONE, FORM_COLOR } from '../render/palette';
+import { countTo, GhostBar } from './anim';
 import { fmtTime, h, mount } from './dom';
 
 const SHORT_STAGE = ['Ovo', 'Filhote', 'Adulto', 'Final'] as const;
+const ELEM_ICON: Record<Elem, string> = { brasa: '🔥', mare: '🌊', broto: '🌿' };
 
 const PHASE_INFO: Record<string, { label: string; next: string; at: number }> = {
   coleta: { label: 'COLETA', next: 'Caçada em', at: BALANCE.phases.coletaEnd },
@@ -12,9 +14,29 @@ const PHASE_INFO: Record<string, { label: string; next: string; at: number }> = 
   final: { label: 'FINAL', next: 'Duelo Final em', at: BALANCE.phases.finalEnd },
 };
 
+/** Troca o texto só quando muda (não reinicia animações nem gera lixo à toa). */
+function setText(el: HTMLElement, v: string): void {
+  if (el.textContent !== v) el.textContent = v;
+}
+
+function toggle(el: HTMLElement, cls: string, on: boolean): void {
+  if (el.classList.contains(cls) !== on) el.classList.toggle(cls, on);
+}
+
+interface BoardRow {
+  el: HTMLElement;
+  dot: HTMLElement;
+  name: HTMLElement;
+  stage: HTMLElement;
+  key: string;
+}
+
+/** HUD da partida. Os nós são criados uma vez; cada snapshot só mexe no que mudou. */
 export class Hud {
   private root: HTMLElement;
   private phaseEl = h('div', { class: 'phase' });
+  private phaseLabel = h('span');
+  private clockEl = h('span', { class: 'clock' });
   private meEl = h('div', { class: 'me' });
   private mini = h('canvas', { class: 'minimap', width: 224, height: 224 }) as HTMLCanvasElement;
   private aliveEl = h('div', { class: 'alive' });
@@ -25,10 +47,40 @@ export class Hud {
   private mapW = 1;
   private fruits: Fruit[] = [];
   private lastLook = '';
-  private creatureSlot = h('div');
-  private meText = h('div');
+  private creatureSlot = h('div', { class: 'portrait' });
+  private nameEl = h('div', { class: 'name' });
+  private speciesEl = h('div', { class: 'species' });
+  private hpText = h('div', { class: 'small muted hptext' });
+  private hpBar = new GhostBar();
+  private xpFill = h('i');
+  private chips = {} as Record<Elem, { el: HTMLElement; key: string }>;
+  private st = {
+    crown: h('span', { class: 'hidden' }, '👑 Coroa'),
+    trophies: h('span', { class: 'hidden' }),
+    shield: h('span', { class: 'hidden' }),
+    hunger: h('span', { class: 'hidden' }),
+  };
+  private rows: BoardRow[] = [];
+  private last = { phaseCls: '', alive: -1, hp: -1, mhp: -1, dead: false, xp: '' };
 
   constructor() {
+    for (const e of ['brasa', 'mare', 'broto'] as const) this.chips[e] = { el: h('span', { style: `background:${ELEM_TONE[e].body}` }), key: '' };
+    for (let i = 0; i < 10; i++) {
+      const dot = h('span', { class: 'dot' });
+      const name = h('span');
+      const stage = h('span', { class: 'muted', style: 'margin-left:auto' });
+      this.rows.push({ el: h('div', { class: 'hidden' }, dot, name, stage), dot, name, stage, key: '' });
+    }
+    this.phaseEl.append(this.phaseLabel, this.clockEl);
+    this.meEl.append(
+      this.creatureSlot,
+      h('div', {}, this.nameEl, this.speciesEl),
+      this.hpText,
+      h('div', { class: 'bars' }, this.hpBar.el, h('div', { class: 'bar xp', title: 'XP' }, this.xpFill)),
+      h('div', { class: 'types' }, this.chips.brasa.el, this.chips.mare.el, this.chips.broto.el),
+      h('div', { class: 'status' }, this.st.crown, this.st.trophies, this.st.shield, this.st.hunger),
+    );
+    this.boardEl.append(...this.rows.map((r) => r.el));
     this.root = mount(
       h(
         'div',
@@ -70,30 +122,35 @@ export class Hud {
 
   update(s: Snap): void {
     const me = s.me;
-    const outside = me?.alive && s.ph !== 'duelo' && Math.hypot(me.x - s.z.x, me.y - s.z.y) >= s.z.r;
-    this.phaseEl.className = `phase${outside || s.ph === 'duelo' ? ' danger' : ''}`;
+    const outside = !!me?.alive && s.ph !== 'duelo' && Math.hypot(me.x - s.z.x, me.y - s.z.y) >= s.z.r;
+    const phaseCls = `phase${outside || s.ph === 'duelo' ? ' danger' : ''}`;
+    if (phaseCls !== this.last.phaseCls) this.phaseEl.className = this.last.phaseCls = phaseCls;
     if (s.ph === 'duelo' && s.duel) {
-      this.phaseEl.replaceChildren(h('span', {}, '⚔ DUELO FINAL'), h('span', { class: 'clock' }, `${s.duel.a} × ${s.duel.b}`));
+      setText(this.phaseLabel, '⚔ DUELO FINAL');
+      setText(this.clockEl, `${s.duel.a} × ${s.duel.b}`);
     } else {
       const info = PHASE_INFO[s.ph] ?? PHASE_INFO.final;
-      this.phaseEl.replaceChildren(
-        h('span', {}, outside ? '⚠ FORA DA ZONA' : info.label),
-        h('span', { class: 'clock' }, `${info.next} ${fmtTime(info.at - s.el)}`),
-      );
+      setText(this.phaseLabel, outside ? '⚠ FORA DA ZONA' : info.label);
+      setText(this.clockEl, `${info.next} ${fmtTime(info.at - s.el)}`);
     }
-    this.aliveEl.textContent = `🐾 ${s.al} vivos`;
+    if (s.al !== this.last.alive) {
+      this.last.alive = s.al;
+      this.aliveEl.textContent = `🐾 ${s.al} vivos`;
+    }
 
-    this.boardEl.replaceChildren(
-      ...s.lb.slice(0, 10).map((r) =>
-        h(
-          'div',
-          { class: r.id === me?.id ? 'me-row' : '' },
-          h('span', { class: 'dot', style: `background:${FORM_COLOR[r.f]}` }),
-          h('span', {}, `${r.cr ? '👑 ' : ''}${r.n}`),
-          h('span', { class: 'muted', style: 'margin-left:auto' }, SHORT_STAGE[r.s]),
-        ),
-      ),
-    );
+    for (let i = 0; i < this.rows.length; i++) {
+      const row = this.rows[i];
+      const r = s.lb[i];
+      const key = r ? `${r.id}|${r.f}|${r.s}|${r.cr ?? 0}|${r.n}|${r.id === me?.id ? 1 : 0}` : '';
+      if (key === row.key) continue;
+      row.key = key;
+      toggle(row.el, 'hidden', !r);
+      if (!r) continue;
+      row.el.className = r.id === me?.id ? 'me-row' : '';
+      row.dot.style.background = FORM_COLOR[r.f];
+      row.name.textContent = `${r.cr ? '👑 ' : ''}${r.n}`;
+      row.stage.textContent = SHORT_STAGE[r.s];
+    }
 
     if (me) this.updateMe(s);
     this.drawMinimap(s);
@@ -105,36 +162,43 @@ export class Hud {
     if (key !== this.lastLook) {
       this.lastLook = key;
       this.creatureSlot.replaceChildren(creatureImg(me.look, 2));
+      setText(this.nameEl, speciesName(me.look.form, me.look.stage));
+      setText(this.speciesEl, `${FORM_LABEL[me.look.form]} · ${STAGE_LABEL[me.look.stage]}`);
     }
+
+    const dead = !me.alive;
+    if (dead) {
+      if (!this.last.dead) setText(this.hpText, 'Eliminado');
+    } else if (me.hp !== this.last.hp || me.mhp !== this.last.mhp || this.last.dead) {
+      const from = this.last.hp < 0 || me.mhp !== this.last.mhp ? me.hp : this.last.hp;
+      const mhp = me.mhp;
+      countTo(this.hpText, from, me.hp, 300, (n) => `❤ ${n}/${mhp}`);
+    }
+    this.last.dead = dead;
+    this.last.hp = me.hp;
+    this.last.mhp = me.mhp;
+    this.hpBar.set(me.mhp ? me.hp / me.mhp : 0);
+
+    const xp = `scaleX(${me.xpNeed ? Math.min(1, me.xp / me.xpNeed) : 1})`;
+    if (xp !== this.last.xp) this.xpFill.style.transform = this.last.xp = xp;
+
     const total = me.points.brasa + me.points.mare + me.points.broto || 1;
-    const statuses: string[] = [];
-    if (me.crown) statuses.push('👑 Coroa');
-    if (me.trophies) statuses.push(`🏆×${me.trophies}`);
-    if (me.shieldMs > 0) statuses.push(`🛡️ ${Math.ceil(me.shieldMs / 1000)}s`);
-    if (me.hungerMs > 0) statuses.push(`🍖 Fome ${Math.ceil(me.hungerMs / 1000)}s`);
-    this.meText.replaceChildren(
-      h('div', { class: 'name' }, speciesName(me.look.form, me.look.stage)),
-      h('div', { class: 'species' }, `${FORM_LABEL[me.look.form]} · ${STAGE_LABEL[me.look.stage]}`),
-    );
-    this.meEl.replaceChildren(
-      this.creatureSlot,
-      this.meText,
-      h('div', { class: 'small muted' }, me.alive ? `❤ ${me.hp}/${me.mhp}` : 'Eliminado'),
-      h(
-        'div',
-        { class: 'bars' },
-        h('div', { class: 'bar' }, h('i', { style: `width:${(100 * me.hp) / me.mhp}%` })),
-        h('div', { class: 'bar xp', title: 'XP' }, h('i', { style: `width:${me.xpNeed ? (100 * me.xp) / me.xpNeed : 100}%` })),
-      ),
-      h(
-        'div',
-        { class: 'types' },
-        ...(['brasa', 'mare', 'broto'] as const).map((e) =>
-          h('span', { style: `background:${ELEM_TONE[e].body};opacity:${0.35 + (0.65 * me.points[e]) / total}` }, `${e === 'brasa' ? '🔥' : e === 'mare' ? '🌊' : '🌿'}${me.points[e]}`),
-        ),
-      ),
-      h('div', { class: 'status' }, ...statuses.map((t) => h('span', {}, t))),
-    );
+    for (const e of ['brasa', 'mare', 'broto'] as const) {
+      const c = this.chips[e];
+      const k = `${me.points[e]}|${total}`;
+      if (k === c.key) continue;
+      c.key = k;
+      c.el.textContent = `${ELEM_ICON[e]}${me.points[e]}`;
+      c.el.style.opacity = String(0.35 + (0.65 * me.points[e]) / total);
+    }
+
+    toggle(this.st.crown, 'hidden', !me.crown);
+    toggle(this.st.trophies, 'hidden', !me.trophies);
+    if (me.trophies) setText(this.st.trophies, `🏆×${me.trophies}`);
+    toggle(this.st.shield, 'hidden', !(me.shieldMs > 0));
+    if (me.shieldMs > 0) setText(this.st.shield, `🛡️ ${Math.ceil(me.shieldMs / 1000)}s`);
+    toggle(this.st.hunger, 'hidden', !(me.hungerMs > 0));
+    if (me.hungerMs > 0) setText(this.st.hunger, `🍖 Fome ${Math.ceil(me.hungerMs / 1000)}s`);
   }
 
   private drawMinimap(s: Snap): void {
