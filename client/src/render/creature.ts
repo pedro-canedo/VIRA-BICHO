@@ -191,6 +191,36 @@ export function drawCreature(look: Look, opts: DrawOpts = {}): HTMLCanvasElement
   return c;
 }
 
+const pixelCache = new Map<string, Float32Array>();
+let readCtx: CanvasRenderingContext2D | null = null;
+
+/** Pixels opacos do bicho como [x, y, rgb, ...] (cache por lookKey; getImageData uma única vez). */
+export function creaturePixels(look: Look): Float32Array {
+  const key = lookKey(look);
+  const hit = pixelCache.get(key);
+  if (hit) return hit;
+  if (!readCtx) {
+    const rc = document.createElement('canvas');
+    rc.width = rc.height = CREATURE_SIZE;
+    readCtx = rc.getContext('2d', { willReadFrequently: true })!;
+  }
+  readCtx.clearRect(0, 0, CREATURE_SIZE, CREATURE_SIZE);
+  readCtx.drawImage(drawCreature(look), 0, 0);
+  const d = readCtx.getImageData(0, 0, CREATURE_SIZE, CREATURE_SIZE).data;
+  const out: number[] = [];
+  for (let y = 0; y < CREATURE_SIZE; y++) {
+    for (let x = 0; x < CREATURE_SIZE; x++) {
+      const i = (y * CREATURE_SIZE + x) * 4;
+      // A sombra (alpha baixo) fica de fora.
+      if (d[i + 3] < 128) continue;
+      out.push(x, y, (d[i] << 16) | (d[i + 1] << 8) | d[i + 2]);
+    }
+  }
+  const arr = new Float32Array(out);
+  pixelCache.set(key, arr);
+  return arr;
+}
+
 /** Versão ampliada (sem suavização) para a interface HTML. */
 export function creatureImg(look: Look, scale = 3, opts: DrawOpts = {}): HTMLCanvasElement {
   const src = drawCreature(look, opts);
