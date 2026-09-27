@@ -15,7 +15,7 @@ Partidas de ~5 minutos, 8 a 16 jogadores (bots completam a arena), controle só 
 | 0:00–2:00 | Coleta | Só bichos selvagens. Coma para evoluir. |
 | 2:00–4:00 | Caçada | Dá para desafiar outros jogadores. A zona começa a fechar. |
 | 4:00–5:00 | Final | Os selvagens somem e cada derrota custa 2 estágios. |
-| 5:00+ | Morte súbita | A zona fecha até sumir. |
+| 5:00 | Duelo Final | Só os 2 mais evoluídos seguem, com HP cheio, no centro da arena. Os demais assistem. Sem limite de turnos; a partir do 5º, a "fúria da arena" tira 10% de HP dos dois por turno. Quem vencer leva a partida. |
 
 **Evolução:** Ovo → Filhote → Adulto → Forma final. O tipo depende do que você comeu:
 - **Tipos puros:** 🔥 Brasa, 🌊 Maré, 🌿 Broto.
@@ -33,11 +33,15 @@ O corpo é sempre a mesma bolinha 16×16, que ganha peças (chamas, nadadeiras, 
 - Quem perde entrega um estágio ao vencedor, e o vencedor também absorve metade dos pontos de tipo do perdedor.
 - Só é eliminado quem perde ainda sendo ovo.
 
+O Duelo Final também começa antes das 5:00 se sobrarem só 2 jogadores depois da Coleta.
+
 **Mecânicas extras:**
 - **Coroa:** o líder fica marcado no mapa e vale XP extra para quem o derrubar.
 - **Fome:** quem perde ganha 5 s de proteção e XP em dobro.
 - **Troféus:** vitórias na forma final dão +10% de dano cada.
 - **Fruta rara:** aparece no coração de cada bioma.
+
+**Efeitos visuais ("Grimório de Pixels"):** cada elemento tem física própria (Brasa sobe, Maré cai e espirala, Broto flutua). Há feitiços no golpe, impacto com hitstop, círculo de runas na evolução, orbe da evolução roubada, eliminação em pixels, zona como barreira mágica, luz do Duelo Final, auras e ambiente vivo nos biomas. No painel de batalha, as cartas viram na revelação e há HP fantasma e selos de eficácia. Tudo em pixel art, sem blur, com orçamento de partículas e qualidade automática pelo FPS (ou escolhida no menu). Respeita `prefers-reduced-motion`. Para ver todos os efeitos em sequência, abra `/?fxdemo`.
 
 ## Arquitetura
 

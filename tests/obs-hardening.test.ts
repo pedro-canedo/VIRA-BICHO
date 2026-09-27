@@ -390,3 +390,35 @@ describe('painel: rótulos só por chaves próprias', () => {
     });
   });
 });
+
+describe('painel: tabela de segurança sem linhas repetidas', () => {
+  const ev = (id: number, t: number) => ({ id, t, type: 'security', data: { kind: 'ws_origin_rejected', origin: 'evil.example' } });
+
+  it("o 'hello' de cada reconexão reenvia o mesmo evento e a tabela continua com uma linha", async () => {
+    await withView((view) => {
+      const e1 = ev(7, 1_000);
+      // Carregamento inicial: loadSecurity() e o 'hello' do SSE trazem o mesmo evento, em qualquer ordem.
+      let sec = view.mergeEvents([e1], [], 20);
+      sec = view.mergeEvents([{ ...e1 }], sec, 20);
+      expect(sec).toHaveLength(1);
+      // Duas reconexões (observador reiniciado): cada 'hello' manda tudo de novo.
+      for (let i = 0; i < 2; i++) sec = view.mergeEvents([{ ...e1 }], sec, 20);
+      expect(sec).toHaveLength(1);
+      // Evento novo de verdade entra no topo.
+      sec = view.mergeEvents([ev(8, 2_000), { ...e1 }], sec, 20);
+      expect(sec.map((e: { id: number }) => e.id)).toEqual([8, 7]);
+    });
+  });
+
+  it('ordena do mais recente e respeita o limite', async () => {
+    await withView((view) => {
+      const many = Array.from({ length: 30 }, (_, i) => ev(i + 1, 1_000 + i));
+      const sec = view.mergeEvents(many.slice(0, 15), many.slice(10), 20);
+      expect(sec).toHaveLength(20);
+      expect(sec[0].id).toBe(30);
+      expect(new Set(sec.map((e: { id: number }) => e.id)).size).toBe(20);
+      // Mesmo id com outro horário (dados do observador apagados, ids recomeçam) é outro evento.
+      expect(view.mergeEvents([ev(1, 5_000)], [ev(1, 1_000)], 20)).toHaveLength(2);
+    });
+  });
+});

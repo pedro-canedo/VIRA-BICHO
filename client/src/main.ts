@@ -4,6 +4,7 @@ import { lostMessage } from './closeReasons';
 import { Net } from './net';
 import { GameScene } from './scenes/GameScene';
 import { BattleUi } from './ui/battle';
+import { BattleInset, applyInsetToDocument } from './ui/battleInset';
 import { recordLook } from './ui/bestiary';
 import { clearUi } from './ui/dom';
 import { showEliminated, showEnd } from './ui/end';
@@ -38,6 +39,11 @@ function resetInput(): void {
 }
 
 const gameEl = document.getElementById('game')!;
+/** Altura do painel de batalha: sobe o foco da câmera e desce os toasts para logo acima dele. */
+const battleInset = new BattleInset((px) => {
+  scene.setBattleInset(px);
+  applyInsetToDocument(px);
+});
 let screen: Screen = 'menu';
 let hud: Hud | null = null;
 let battle: BattleUi | null = null;
@@ -64,7 +70,7 @@ function cleanupGame(): void {
   hud?.destroy();
   hud = null;
   deadEl = null;
-  scene.setBattleInset(0);
+  battleInset.track(null);
   scene.clearWorld();
 }
 
@@ -117,8 +123,8 @@ function onMsg(msg: ServerMsg): void {
         deadEl = null;
       }
       battle = new BattleUi(msg, (a) => net.send({ t: 'act', a }));
-      // O mundo centraliza a luta na área visível acima do painel.
-      requestAnimationFrame(() => scene.setBattleInset(document.querySelector('.battle')?.getBoundingClientRect().height ?? 0));
+      // O mundo centraliza a luta na área visível acima do painel (e acompanha a altura dele).
+      battleInset.track(battle.element);
       return;
     case 'b_turn':
       if (battle?.id === msg.id) battle.startTurn(msg.turn, msg.ms);
@@ -132,7 +138,7 @@ function onMsg(msg: ServerMsg): void {
       b.end(msg, () => {
         if (battle === b) {
           battle = null;
-          scene.setBattleInset(0);
+          battleInset.track(null);
         }
       });
       return;
@@ -146,7 +152,7 @@ function onMsg(msg: ServerMsg): void {
     case 'elim':
       battle?.destroy();
       battle = null;
-      scene.setBattleInset(0);
+      battleInset.track(null);
       deadEl?.remove();
       deadEl = showEliminated(msg.by, msg.place, msg.reason, () => toMenu());
       return;

@@ -2,7 +2,7 @@
 // jogo (apelidos, salas, países, detalhes) entra no DOM só como nó de texto (textContent).
 // @ts-check
 
-import { C, EVENT_LABELS, FORM_COLORS, FORM_NAMES, PHASES, SECURITY_LABELS, feedItem, flag, fmtClockDur, fmtDur, fmtNum, fmtTime, h, lookup, setText } from './view.js';
+import { C, EVENT_LABELS, FORM_COLORS, FORM_NAMES, PHASES, SECURITY_LABELS, byTimeDesc, feedItem, flag, fmtClockDur, fmtDur, fmtNum, fmtTime, h, lookup, mergeEvents, setText } from './view.js';
 
 /** @typedef {import('./view.js').Ev} Ev */
 
@@ -476,6 +476,8 @@ function renderBreakdown() {
 }
 
 const FEED_MAX = 150;
+/** Linhas da tabela de segurança. */
+const SEC_MAX = 20;
 
 function renderFeedFilters() {
   $('feed-filters').replaceChildren(
@@ -506,9 +508,6 @@ function renderFeed() {
   else feed.replaceChildren(...list.map((e) => feedItem(e, false)));
 }
 
-/** Mais recente primeiro, pelo horário do evento (o id desempata). @param {Ev} a @param {Ev} b */
-const byTimeDesc = (a, b) => b.t - a.t || b.id - a.id;
-
 /** @param {Ev[]} evs */
 function addEvents(evs) {
   if (!evs.length) return;
@@ -522,10 +521,13 @@ function addEvents(evs) {
   state.events = [...fresh, ...state.events];
   if (!inOrder) state.events.sort(byTimeDesc);
   state.events = state.events.slice(0, 500);
+  // O 'hello' de cada reconexão zera state.events, então tudo nele parece novo: a tabela de
+  // segurança junta por id em vez de empilhar (senão cada reconexão duplica as linhas).
   const sec = fresh.filter((e) => e.type === 'security');
   if (sec.length) {
-    state.security = [...sec, ...state.security].sort(byTimeDesc).slice(0, 20);
-    renderSecurityTable();
+    const before = state.security;
+    state.security = mergeEvents(sec, before, SEC_MAX);
+    if (state.security.length !== before.length || state.security.some((e, i) => e !== before[i])) renderSecurityTable();
   }
   if (!inOrder) {
     renderFeed();
@@ -685,8 +687,11 @@ async function loadSeries() {
 
 async function loadSecurity() {
   try {
-    const { events } = await getJSON('/api/events?type=security&limit=20');
-    state.security = events;
+    const { events } = await getJSON(`/api/events?type=security&limit=${SEC_MAX}`);
+    // A lista do servidor manda; só mantém os eventos ao vivo que chegaram depois dela (corrida
+    // com o 'hello'/'tick' do SSE), sem repetir os que vieram nas duas.
+    const newest = events.length ? Math.max(...events.map((/** @type {Ev} */ e) => e.t)) : -Infinity;
+    state.security = mergeEvents(events, state.security.filter((e) => e.t > newest), SEC_MAX);
     renderSecurityTable();
   } catch (err) {
     console.warn('segurança:', err);

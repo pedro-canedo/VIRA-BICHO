@@ -740,6 +740,11 @@ export class BattleUi {
     }, 1800);
   }
 
+  /** Raiz do painel (para medir a altura que ele ocupa na tela). */
+  get element(): HTMLElement {
+    return this.root;
+  }
+
   destroy(): void {
     this.fx.cancel();
     this.pending = null;

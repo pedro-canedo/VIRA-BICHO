@@ -954,6 +954,26 @@ input.field:focus {
   width: min(92vw, 420px);
 }
 
+/* Na batalha a câmera sobe a luta para o topo da tela: os avisos descem para logo acima do painel
+   (--battle-inset é a altura dele; .battle fica a 10px da base) em vez de cobrir o nome dos lutadores. */
+body.in-battle .toasts {
+  top: auto;
+  bottom: calc(var(--battle-inset, 0px) + 18px + var(--safe-b));
+}
+
+/* Tela larga e baixa (notebook): acima do painel não sobra espaço nem para os lutadores; os avisos
+   vão para o lado direito do painel (520px no centro), acima da dica do canto. */
+@media (min-width: 1100px) and (max-height: 700px) {
+  body.in-battle .toasts {
+    left: auto;
+    right: 16px;
+    transform: none;
+    bottom: calc(52px + var(--safe-b));
+    align-items: flex-end;
+    width: min(360px, calc(50vw - 260px - 32px));
+  }
+}
+
 .toast {
   background: #fff;
   color: #140f24;

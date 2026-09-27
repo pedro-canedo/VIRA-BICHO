@@ -179,6 +179,24 @@ export const C = {
   gapFill: 'rgba(170, 159, 204, 0.08)',
 };
 
+/** Mais recente primeiro, pelo horário do evento (o id desempata). @param {Ev} a @param {Ev} b */
+export const byTimeDesc = (a, b) => b.t - a.t || b.id - a.id;
+
+/**
+ * Junta duas listas de eventos sem repetir (mesmo id e horário = mesmo evento), mais recentes
+ * primeiro, no máximo `max`. O 'hello' de cada reconexão do SSE reenvia eventos que a tela já tem.
+ * @param {Ev[]} a @param {Ev[]} b @param {number} max
+ */
+export function mergeEvents(a, b, max) {
+  /** @type {Map<string, Ev>} */
+  const seen = new Map();
+  for (const e of [...a, ...b]) {
+    const k = `${e.id}:${e.t}`;
+    if (!seen.has(k)) seen.set(k, e);
+  }
+  return [...seen.values()].sort(byTimeDesc).slice(0, max);
+}
+
 /** Descrição do evento como nós (nomes em destaque, sempre como texto). @param {Ev} e */
 export function describe(e) {
   const d = e.data;
