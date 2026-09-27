@@ -4,7 +4,9 @@ import type { Duplex } from 'node:stream';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { BALANCE, WS_PATH, parseClientMsg, type ServerMsg } from '@vb/shared';
 import type { Conn } from './entities';
+import { createInternalServer, listenInternal, tokenProblem } from './internal';
 import { Lobby } from './lobby';
+import { GameMetrics, connMeta, leaveReason, type ConnMeta } from './metrics';
 import {
   DEFAULT_ORIGINS,
   KeyedBuckets,
@@ -38,6 +40,17 @@ export interface AppOptions {
   /** Heap usado em MB: a guarda de memória compara com heapRejectMB. */
   heapMB?: () => number;
   log?: (line: string) => void;
+  /**
+   * Endpoint interno do observador (GET /internal/stats, só em 127.0.0.1). Sem token, ou com menos de
+   * 16 caracteres, ele não é criado. `rate`: limite das requisições autenticadas (padrão 20 de uma vez,
+   * 5/s); `failRate`: balde separado para as sem o token certo (padrão igual a `rate`).
+   */
+  obs?: {
+    token?: string;
+    rate?: { capacity: number; refillPerSec: number };
+    failRate?: { capacity: number; refillPerSec: number };
+    eventCapacity?: number;
+  };
 }
 
 export interface App {
@@ -45,6 +58,17 @@ export interface App {
   wss: WebSocketServer;
   lobby: Lobby;
   security: SecurityLog;
+  metrics: GameMetrics;
+  /** Servidor do endpoint interno (null = desligado). Sobe com listenInternal. */
+  internal: Server | null;
+  /** Escuta o endpoint interno em 127.0.0.1:port (0 = porta livre). Resolve com a porta. */
+  listenInternal(port: number): Promise<number>;
+  /**
+   * Como listenInternal, mas sem falhar: se a porta estiver ocupada, registra `obs_internal_listen_error`
+   * (uma linha por falha, a partir da 2ª só a cada 10) e tenta de novo a cada `retryMs` até conseguir
+   * ou até o close(). O jogo segue no ar de qualquer jeito.
+   */
+  serveInternal(port: number, retryMs?: number): void;
   close(): Promise<void>;
 }
 
@@ -144,8 +168,15 @@ export function createApp(opts: AppOptions): App {
   const isExempt = (key: string) => key === 'local' || trusted.has(key);
   const started = now();
 
-  const security = new SecurityLog({ now, write: log, throttleMs: cfg.log.throttleMs, summaryMs: cfg.log.summaryMs });
-  const lobby = new Lobby({ limits: cfg.lobby, game: cfg.game, isExempt, onSecurity: (kind, key, d) => security.event(kind, key, d) });
+  const metrics = new GameMetrics({ now, eventCapacity: opts.obs?.eventCapacity });
+  const security = new SecurityLog({
+    now,
+    write: log,
+    throttleMs: cfg.log.throttleMs,
+    summaryMs: cfg.log.summaryMs,
+    onLine: (kind, tag, detail) => metrics.security(kind, tag, detail),
+  });
+  const lobby = new Lobby({ limits: cfg.lobby, game: cfg.game, isExempt, onSecurity: (kind, key, d) => security.event(kind, key, d), hooks: metrics });
   const files = loadStatic(opts.publicDir);
   const httpBuckets = new KeyedBuckets(cfg.http.rate.capacity, cfg.http.rate.refillPerSec, cfg.keys.maxTracked);
   const handshakeBuckets = new KeyedBuckets(cfg.ws.handshake.capacity, cfg.ws.handshake.refillPerSec, cfg.keys.maxTracked);
@@ -284,7 +315,8 @@ export function createApp(opts: AppOptions): App {
           return rejectUpgrade(socket, 429, 'Too Many Requests', 'Retry-After: 10\r\n');
         }
       }
-      wss.handleUpgrade(req, socket, head, (ws) => onConnection(ws, id.key));
+      const meta = connMeta(id.viaCloudflare, req.headers);
+      wss.handleUpgrade(req, socket, head, (ws) => onConnection(ws, id.key, meta));
     } catch (err) {
       security.event('http_error', 'upgrade', (err as Error)?.name);
       socket.destroy();
@@ -303,7 +335,7 @@ export function createApp(opts: AppOptions): App {
     ws.once('close', () => clearTimeout(timer));
   }
 
-  function onConnection(ws: WebSocket, key: string): void {
+  function onConnection(ws: WebSocket, key: string, meta: ConnMeta): void {
     ws.on('error', (err) => {
       security.event('ws_error', key, (err as NodeJS.ErrnoException).code);
       ws.terminate();
@@ -324,6 +356,7 @@ export function createApp(opts: AppOptions): App {
     if (net !== null) bump(perNet, net, 1);
     const t0 = now();
     const conn: Conn = { key, send: makeSender(ws, cfg.ws.backpressure, (kind) => security.event(kind, key)) };
+    metrics.connOpened(conn, meta);
     const abuse = cfg.ws.abuse;
     const st: ConnState = {
       key,
@@ -396,17 +429,18 @@ export function createApp(opts: AppOptions): App {
         if (msg.t === 'hello' && lobby.roomOf(conn)) st.everInRoom = true;
       } catch (err) {
         security.event('handle_error', key, msg.t);
+        metrics.error(`handle ${msg.t}`, err);
         console.error(String((err as Error)?.stack ?? err).slice(0, 2000));
         closeHard(ws, 1011, 'erro interno');
       }
     });
 
-    ws.on('close', () => {
+    ws.on('close', (code) => {
       states.delete(ws);
       bump(perKey, key, -1);
       if (net !== null) bump(perNet, net, -1);
       try {
-        lobby.disconnect(conn, now());
+        lobby.disconnect(conn, now(), leaveReason(code));
       } catch (err) {
         console.error(String((err as Error)?.stack ?? err).slice(0, 2000));
       }
@@ -477,12 +511,20 @@ export function createApp(opts: AppOptions): App {
       fn();
     } catch (err) {
       security.event('timer_error', 'server', name);
+      metrics.error(`timer ${name}`, err);
       console.error(`[timer ${name}]`, String((err as Error)?.stack ?? err).slice(0, 2000));
     }
   };
 
+  // Só duas leituras de relógio e uma escrita num Float64Array por tick (ver GameMetrics.tickDone).
+  const tick = () => {
+    const t0 = performance.now();
+    lobby.tick(now());
+    metrics.tickDone(performance.now() - t0);
+  };
+
   const timers = [
-    setInterval(guarded('tick', () => lobby.tick(now())), BALANCE.tickMs),
+    setInterval(guarded('tick', tick), BALANCE.tickMs),
     setInterval(guarded('heartbeat', heartbeat), cfg.ws.heartbeatMs),
     setInterval(guarded('sweep_conns', sweepConns), cfg.ws.sweepMs),
     setInterval(
@@ -497,17 +539,80 @@ export function createApp(opts: AppOptions): App {
     ),
   ];
 
+  // ---------------------------------------------------------------- observabilidade
+
+  let internal: Server | null = null;
+  const problem = tokenProblem(opts.obs?.token);
+  if (problem === null) {
+    internal = createInternalServer({
+      token: opts.obs!.token!,
+      now,
+      log,
+      rate: opts.obs?.rate,
+      failRate: opts.obs?.failRate,
+      snapshot: (since) => {
+        // O monitor do event loop (um timer interno) só liga quando alguém lê de fato: com a porta
+        // ocupada ou sem observador, não custa nada.
+        metrics.enableLoopMonitor();
+        return metrics.snapshot(since, { rooms: lobby.rooms.values(), openConns: wss.clients.size, security: security.summary() });
+      },
+    });
+  } else {
+    // Nunca o valor do token, só o motivo.
+    log(JSON.stringify({ t: now(), ev: 'obs_internal_off', reason: problem }));
+  }
+
+  let closing = false;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function serveInternal(port: number, retryMs = 30_000): void {
+    const srv = internal;
+    if (!srv) return;
+    let fails = 0;
+    const attempt = () => {
+      retryTimer = null;
+      if (closing || srv.listening) return;
+      listenInternal(srv, port).then(
+        (p) => log(JSON.stringify({ t: now(), ev: 'obs_internal_listening', host: '127.0.0.1', port: p, ...(fails > 0 ? { afterFails: fails } : {}) })),
+        (err: NodeJS.ErrnoException) => {
+          fails++;
+          if (fails === 1 || fails % 10 === 0) {
+            log(JSON.stringify({ t: now(), ev: 'obs_internal_listen_error', code: err.code ?? String(err.name), fails, retryInMs: retryMs }));
+          }
+          if (closing) return;
+          retryTimer = setTimeout(attempt, retryMs);
+          retryTimer.unref();
+        },
+      );
+    };
+    attempt();
+  }
+
   return {
     server,
     wss,
     lobby,
     security,
+    metrics,
+    internal,
+    listenInternal(port: number) {
+      if (!internal) return Promise.reject(new Error('endpoint interno desligado (OBS_INTERNAL_TOKEN)'));
+      return listenInternal(internal, port);
+    },
+    serveInternal,
     async close() {
+      closing = true;
+      if (retryTimer) clearTimeout(retryTimer);
       for (const t of timers) clearInterval(t);
       for (const ws of wss.clients) ws.terminate();
       await new Promise<void>((r) => wss.close(() => r()));
       server.closeAllConnections();
       await new Promise<void>((r) => server.close(() => r()));
+      if (internal) {
+        internal.closeAllConnections();
+        await new Promise<void>((r) => internal!.close(() => r()));
+      }
+      metrics.dispose();
     },
   };
 }

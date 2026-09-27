@@ -331,31 +331,40 @@ describe('gravação atômica', () => {
   });
 });
 
+/** Carrega observer/public/view.js com um DOM mínimo (só texto, sem HTML). */
+class FakeText {
+  constructor(readonly data: string) {}
+  get textContent() {
+    return this.data;
+  }
+}
+class FakeEl {
+  className = '';
+  title = '';
+  kids: (FakeEl | FakeText)[] = [];
+  constructor(readonly tagName: string) {}
+  append(...n: (FakeEl | FakeText)[]) {
+    this.kids.push(...n);
+  }
+  get textContent(): string {
+    return this.kids.map((c) => c.textContent).join('');
+  }
+}
+type E = FakeEl;
+async function withView(fn: (view: any) => void | Promise<void>): Promise<void> {
+  const g = globalThis as unknown as { document?: unknown };
+  const prev = g.document;
+  g.document = { createElement: (t: string) => new FakeEl(t), createTextNode: (s: string) => new FakeText(s) };
+  try {
+    await fn(await import(/* @vite-ignore */ pathToFileURL(resolve('observer/public/view.js')).href));
+  } finally {
+    g.document = prev;
+  }
+}
+
 describe('painel: rótulos só por chaves próprias', () => {
   it("forma 'constructor' e tipos desconhecidos aparecem como texto cru, nunca como função", async () => {
-    class T {
-      constructor(readonly data: string) {}
-      get textContent() {
-        return this.data;
-      }
-    }
-    class E {
-      className = '';
-      title = '';
-      kids: (E | T)[] = [];
-      constructor(readonly tagName: string) {}
-      append(...n: (E | T)[]) {
-        this.kids.push(...n);
-      }
-      get textContent(): string {
-        return this.kids.map((c) => c.textContent).join('');
-      }
-    }
-    const g = globalThis as unknown as { document?: unknown };
-    const prev = g.document;
-    g.document = { createElement: (t: string) => new E(t), createTextNode: (s: string) => new T(s) };
-    try {
-      const view = await import(/* @vite-ignore */ pathToFileURL(resolve('observer/public/view.js')).href);
+    await withView((view) => {
       expect(view.lookup(view.FORM_NAMES, 'constructor')).toBeUndefined();
       expect(view.lookup(view.FORM_NAMES, 'mare')).toBe('Maré');
       const end = view.feedItem({ id: 1, t: Date.now(), type: 'match_end', data: { room: 'A', winner: 'w', form: 'constructor', durationMs: 1000, humans: 1 } }, false) as E;
@@ -368,8 +377,16 @@ describe('painel: rótulos só por chaves próprias', () => {
       const weird = view.feedItem({ id: 4, t: Date.now(), type: 'security', data: { kind: 'toString', ipHash: 'ab12', detail: 'x' } }, false) as E;
       expect(weird.textContent).toContain('toString');
       expect(weird.textContent).not.toContain('function');
-    } finally {
-      g.document = prev;
-    }
+    });
+  });
+
+  it("evento de segurança sem detalhe não deixa ' · ' sobrando; cabeçalho da Cloudflare pela LAN não é só 'túnel mal configurado'", async () => {
+    await withView((view) => {
+      const text = (data: Record<string, unknown>) => view.describe({ id: 1, t: 0, type: 'security', data }).map((n: E | string) => (typeof n === 'string' ? n : n.textContent)).join('');
+      expect(text({ kind: 'ws_invalid_msg', ipHash: 'd20a827f81', detail: '' })).toBe('mensagem inválida · d20a827f81');
+      expect(text({ kind: 'ws_invalid_msg', ipHash: 'd20a827f81' })).toBe('mensagem inválida · d20a827f81');
+      expect(text({ kind: 'http_rate_limited', ipHash: 'fac35cd139', detail: 'GET' })).toBe('limite de requisições · fac35cd139 · GET');
+      expect(text({ kind: 'cf_header_from_lan', ipHash: 'ab12', detail: '' })).toBe('cabeçalho Cloudflare fora do túnel · ab12');
+    });
   });
 });

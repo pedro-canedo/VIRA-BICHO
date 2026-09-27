@@ -87,6 +87,9 @@ Variáveis de ambiente:
 | `PUBLIC_DIR` | Pasta do build do cliente (padrão `public` ao lado do `server.mjs`). |
 | `ALLOWED_ORIGINS` | Origins extras aceitos no WebSocket, separados por vírgula. Os domínios públicos do jogo já vêm incluídos. `localhost` e IPs privados são aceitos fora do túnel. |
 | `VB_TRUSTED_IPS` | IPs isentos dos limites por IP, separados por vírgula (ex.: a máquina do teste de carga na LAN, ou o IP público de uma escola/LAN party em que mais de 16 pessoas jogam atrás do mesmo NAT). |
+| `OBS_INTERNAL_TOKEN` | Segredo do endpoint interno do observador (ver Observabilidade). Sem ele, ou com menos de 16 caracteres, o endpoint não sobe e o jogo roda igual. Depois de lido, o valor sai do `process.env` (não passa para processos filhos). |
+| `OBS_INTERNAL_PORT` | Porta do endpoint interno, sempre em `127.0.0.1` (padrão 3002). |
+| `VB_VERSION` | Versão reportada ao observador. Sem valor, vale a gravada no build (`package.json` + commit). |
 
 Códigos de fechamento do WebSocket: 1008 (abuso ou mensagens inválidas), 1009 (mensagem grande), 1011 (erro interno), 1012 (reinício), 4001 (sem hello), 4002 (ocioso fora de sala), 4003 (parado na partida) e 4029 (conexões demais da mesma rede).
 
@@ -125,6 +128,19 @@ O **vira-bicho-obs** é um serviço separado (runit `vira-bicho-obs`, porta `300
 | 60 s | Grava `series.bin` e `state.json` na pasta de dados (restaurados ao iniciar). |
 
 Os eventos vão para `events-AAAA-MM-DD.ndjson` (um arquivo por dia, apagados depois de 7 dias, com teto de 20 MB por dia: passando disso, o resto do dia fica só no feed em memória). Ao iniciar, o observador lê só o fim desses arquivos, então um dia com muitos eventos não estoura a memória. As gravações de `series.bin`, `state.json` e `sessions.json` são atômicas e com `fsync`, para aguentar o celular desligar de repente. O contrato completo está em [`shared/src/obs.ts`](shared/src/obs.ts).
+
+**Lado do jogo** ([`server/src/metrics.ts`](server/src/metrics.ts) e [`server/src/internal.ts`](server/src/internal.ts)): o jogo abre um segundo servidor HTTP, **só em `127.0.0.1:3002`** (`OBS_INTERNAL_PORT`), separado da porta 3000. Por isso o túnel, que aponta para `localhost:3000`, nunca chega a ele. O servidor só sobe com um `OBS_INTERNAL_TOKEN` de pelo menos 16 caracteres, e o token é conferido em tempo constante (sem ele: 401). Requisições com `CF-Connecting-IP`, `CF-Ray` ou `X-Forwarded-For` recebem 403, mesmo com o token. O servidor aceita só GET, tem timeouts curtos e um teto de 16 conexões e 20 requisições de uma vez (recarga de 5/s). O token é conferido antes do limite, e as requisições sem o token certo gastam um balde separado: um app qualquer do celular que martele a porta sem o token leva 429, mas não tira os dados do observador. Se a porta estiver ocupada, o jogo sobe do mesmo jeito, registra `obs_internal_listen_error` (uma linha, depois só a cada 10 falhas) e tenta de novo a cada 30 s; quando consegue, registra `obs_internal_listening`.
+- **Contadores** cumulativos desde o início do processo. Uma partida em que todos os humanos saem no meio termina com `match_end` sem vencedor (`winner` e `form` nulos), então `matchesEnded` alcança `matchesStarted`. Os de segurança (`rateLimited`, `rejectedConnections`, `originRejected`) vêm do `SecurityLog`. `errors` soma exceções em timers, no tratamento de mensagens e no tick das salas.
+- **Eventos** num buffer circular de 2000, com `seq` crescente. Os de segurança passam pelo mesmo throttle do log (1 por tipo e IP por minuto) e por um teto global (30 de uma vez, depois 1 a cada 2 s). Os de erro têm um teto parecido. Os contadores contam tudo. O `ipHash` é o mesmo `tag` do log: um hash com salt que muda a cada processo, nunca o IP.
+- **Salas:** `bots` = jogadores que não são de humanos ainda na sala (bots desde o início e humanos que saíram), então `humans + bots` é sempre o total da partida, inclusive na tela de fim.
+- **Jogadores:** `online` = humanos conectados em salas = `lobby` + `playing` (vivos na partida) + `spectating` (eliminados assistindo, ou na tela de fim). O país vem do `CF-IPCountry` só quando a conexão chega pelo túnel (loopback com `CF-Connecting-IP`). Direto ou pela LAN, o país é `XX`. O dispositivo sai do User-Agent.
+- **Processo:** `tickMs` mede cada `lobby.tick` numa janela dos últimos 30 s. O lag do event loop vem do `monitorEventLoopDelay` com resolução de 50 ms (janela de cerca de 10 s, já descontada a resolução do timer). Ele só liga na primeira leitura autenticada: sem observador, ou com a porta interna ocupada, não custa nada. A CPU é medida entre duas coletas. No tick, o custo extra são duas leituras de relógio e uma escrita num `Float64Array` (~0,1 µs). Os ganchos da partida só rodam em entrada, início e fim, batalha e eliminação.
+- Os logs do jogo nunca levam IP cru, token nem código de sala. O endpoint interno mostra os códigos, porque é local e autenticado.
+
+```bash
+# No celular, lendo o que o observador lê:
+(. ~/.config/vira-bicho/secrets.env; curl -s -H "x-obs-token: $OBS_INTERNAL_TOKEN" 'http://127.0.0.1:3002/internal/stats?since=0')
+```
 
 **Painel e APIs**
 

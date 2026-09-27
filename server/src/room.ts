@@ -31,6 +31,7 @@ import {
 } from '@vb/shared';
 import { botChoose, botThink, makeBrain, wildChoose } from './bots';
 import type { Battle, Conn, Entity, Player, Side, Wild } from './entities';
+import type { RoomHooks } from './hooks';
 import { SECURITY } from './security';
 
 const BOT_NAMES = [
@@ -72,6 +73,8 @@ export class Room {
   duel: { a: Player; b: Player } | null = null;
   /** Quantas buscas A* de jogadores já rodaram (métrica e testes). */
   pathfinds = 0;
+  /** Observabilidade (injetada pelo Lobby); null = sem ganchos. */
+  hooks: RoomHooks | null = null;
 
   private nextId = 1;
   private lastLobbyAt = 0;
@@ -180,6 +183,7 @@ export class Room {
     }
     this.feed('A Coleta começou! Coma bichos selvagens para evoluir.', 'phase');
     this.maintainWilds(now, true);
+    this.hooks?.matchStart(this);
   }
 
   private createPlayer(name: string, at: Vec, conn: Conn | null): Player {
@@ -569,6 +573,7 @@ export class Room {
       if (e.kind === 'player') e.target = null;
     }
     this.battles.set(bt.id, bt);
+    this.hooks?.battle(this, kind);
     const ms = this.choiceMs(bt);
     this.send(a, { t: 'b_start', id: bt.id, kind: bt.kind, you: this.fighterInfo(a, false), opp: this.fighterInfo(b, false), turn: 1, ms });
     if (b.kind === 'player') {
@@ -770,6 +775,7 @@ export class Room {
     this.send(p, { t: 'elim', by, place, reason });
     if (reason !== 'duelo') this.feed(by ? `${p.name} foi eliminado por ${by}.` : `${p.name} foi consumido pela zona.`, 'elim');
     for (const q of this.players.values()) if (q.target === p.id) q.target = null;
+    this.hooks?.eliminated(this, p);
   }
 
   // ---------------------------------------------------------------- duelo final
@@ -822,6 +828,7 @@ export class Room {
     }
     this.zone.r = this.zone.tr = BALANCE.zone.finalRadius;
     this.duel = { a, b };
+    this.hooks?.duel(this, a, b);
     if (out > 0) this.feed(`${out} jogador(es) ficaram de fora: só os 2 mais evoluídos seguem.`, 'elim');
     this.feed(`DUELO FINAL: ${a.name} contra ${b.name}! Quem vencer leva a partida.`, 'phase');
     this.startBattle(a, b, 'final');
@@ -949,6 +956,7 @@ export class Room {
       this.pushHistory(winner, 'Venceu a partida');
       this.feed(`${winner.name} venceu a partida como ${speciesName(this.look(winner).form, winner.stage)}!`, 'phase');
     }
+    this.hooks?.matchEnd(this, winner);
     for (const m of this.members) {
       const p = m.player;
       if (!p) continue;

@@ -2,6 +2,7 @@ import { ACTIONS, BALANCE, type Action, type ClientMsg } from '@vb/shared';
 import type { Conn } from './entities';
 import { Room, type Member } from './room';
 import type { Player } from './entities';
+import type { LobbyHooks } from './hooks';
 import { KeyedBuckets, SECURITY, SlidingWindow, TokenBucket, netKey, sanitizeName, type LobbyLimits, type SecKind, type SecurityConfig } from './security';
 
 export { sanitizeName };
@@ -23,6 +24,8 @@ export interface LobbyOptions {
   isExempt?: (key: string) => boolean;
   onSecurity?: (kind: SecKind, key: string, detail?: string) => void;
   game?: SecurityConfig['game'];
+  /** Observabilidade (GameMetrics). Também é repassado a cada sala criada. */
+  hooks?: LobbyHooks | null;
 }
 
 /** Gerencia salas e roteia as mensagens de cada conexão. */
@@ -40,8 +43,10 @@ export class Lobby {
   /** Quem gastou a ficha de criação de cada sala (só chaves não isentas). */
   private readonly creators = new WeakMap<Room, string>();
   private readonly game: SecurityConfig['game'];
+  private readonly hooks: LobbyHooks | null;
 
-  constructor({ limits = SECURITY.lobby, isExempt = () => false, onSecurity = () => {}, game = SECURITY.game }: LobbyOptions = {}) {
+  constructor({ limits = SECURITY.lobby, isExempt = () => false, onSecurity = () => {}, game = SECURITY.game, hooks = null }: LobbyOptions = {}) {
+    this.hooks = hooks;
     this.limits = limits;
     this.isExempt = isExempt;
     this.onSecurity = onSecurity;
@@ -100,6 +105,8 @@ export class Lobby {
       return null;
     }
     const room = new Room(this.newCode(), isPrivate, undefined, { targetSlackTiles: this.game.targetSlackTiles });
+    room.hooks = this.hooks;
+    this.hooks?.roomCreated(room, now);
     this.rooms.set(room.code, room);
     if (!exempt) this.creators.set(room, key);
     return room;
@@ -121,7 +128,7 @@ export class Lobby {
     const cur = this.members.get(conn);
     switch (msg.t) {
       case 'hello': {
-        if (cur) this.disconnect(conn, now);
+        if (cur) this.disconnect(conn, now, 'trocou de sala');
         const key = conn.key ?? 'anon';
         const exempt = this.isExempt(key);
         if (!exempt) {
@@ -154,6 +161,7 @@ export class Lobby {
         const member: Member = { conn, name, player: null };
         room.join(member, now);
         this.members.set(conn, { member, room });
+        this.hooks?.join(conn, member, room, msg.mode);
         return;
       }
       case 'startnow':
@@ -178,11 +186,13 @@ export class Lobby {
     }
   }
 
-  disconnect(conn: Conn, now: number): void {
+  /** `reason`: rótulo curto para a observabilidade (saiu, fechou, caiu...). */
+  disconnect(conn: Conn, now: number, reason = 'saiu'): void {
     const cur = this.members.get(conn);
     if (!cur) return;
     this.members.delete(conn);
     const room = cur.room;
+    this.hooks?.leave(cur.member, room, reason);
     room.leave(cur.member);
     // Sala vazia some na hora: não fica ocupando vaga de maxRooms até o próximo tick.
     if (room.state === 'lobby' && room.humans === 0) this.dropRoom(room, now);
@@ -203,15 +213,26 @@ export class Lobby {
       try {
         room.tick(now);
       } catch (err) {
-        console.error(`[sala ${room.code}] erro no tick:`, err);
+        // Sem o código da sala no log (ele dá acesso à sala privada).
+        console.error('[sala] erro no tick:', err);
+        const wasPlaying = room.state === 'play';
         room.state = 'fim';
         room.endedAt = now;
+        this.hooks?.error('tick', err);
+        if (wasPlaying) this.hooks?.matchEnd(room, null);
       }
       const empty = room.state === 'lobby' && room.humans === 0 && room.startsAt === null;
       const finished = room.state === 'fim' && now - room.endedAt > BALANCE.lobby.endLingerMs;
       if (empty || finished || room.abandoned) {
+        // Todos os humanos saíram no meio: a partida acaba sem vencedor (senão matchesEnded nunca
+        // alcança matchesStarted). Se ela já tinha terminado, o GameMetrics não repete o match_end.
+        if (room.abandoned && room.state === 'play') this.hooks?.matchEnd(room, null);
         this.dropRoom(room, now);
-        for (const [conn, cur] of this.members) if (cur.room === room) this.members.delete(conn);
+        for (const [conn, cur] of this.members) {
+          if (cur.room !== room) continue;
+          this.members.delete(conn);
+          this.hooks?.leave(cur.member, room, 'sala encerrada');
+        }
       }
     }
   }

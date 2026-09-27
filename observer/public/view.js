@@ -138,6 +138,31 @@ export const SECURITY_LABELS = /** @type {Record<string, string>} */ ({
   bad_message: 'mensagem inválida',
   oversized: 'mensagem grande demais',
   banned: 'bloqueado',
+  // Tipos reais do SecurityLog do jogo (server/src/security.ts).
+  http_error: 'requisição inválida',
+  http_rate_limited: 'limite de requisições',
+  http_405: 'método recusado',
+  ws_origin_rejected: 'origem recusada',
+  ws_server_full: 'servidor cheio',
+  ws_ip_limit: 'conexões demais (IP)',
+  ws_net_limit: 'conexões demais (rede)',
+  ws_handshake_rate: 'limite de conexões',
+  ws_mem_guard: 'guarda de memória',
+  ws_hello_timeout: 'sem hello',
+  ws_idle_timeout: 'ocioso',
+  ws_idle_in_play: 'parado na partida',
+  ws_rate_limited: 'limite de mensagens',
+  ws_abuse_closed: 'fechado por abuso',
+  ws_invalid_msg: 'mensagem inválida',
+  ws_error: 'erro de conexão',
+  ws_slow_consumer: 'cliente lento',
+  // Pode ser o túnel mal configurado ou alguém na LAN forjando o cabeçalho: o rótulo não escolhe.
+  cf_header_from_lan: 'cabeçalho Cloudflare fora do túnel',
+  lobby_room_cap: 'salas demais (IP)',
+  lobby_create_rate: 'criação de salas',
+  lobby_private_cap: 'salas privadas esgotadas',
+  lobby_join_bruteforce: 'códigos errados demais',
+  lobby_hello_rate: 'hello repetido',
 });
 export const C = {
   accent: '#ffcf3f',
@@ -176,7 +201,8 @@ export function describe(e) {
     case 'duel':
       return ['Duelo final na sala ', b('room'), ': ', b('a'), ' × ', b('b')];
     case 'security':
-      return [h('b', null, tr('kind', SECURITY_LABELS)), ` · ${s('ipHash')} · ${s('detail')}`];
+      // detail vem vazio em vários tipos: sem ' · ' sobrando no fim.
+      return [h('b', null, tr('kind', SECURITY_LABELS)), ` · ${s('ipHash')}${typeof d.detail === 'string' && d.detail !== '' ? ` · ${d.detail}` : ''}`];
     case 'error':
       return [s('message')];
     case 'restart':

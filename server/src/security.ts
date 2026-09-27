@@ -311,10 +311,20 @@ export class SecurityLog {
   private readonly salt: string;
   private lastSummaryAt: number;
   private sinceSummary = 0;
+  private readonly onLine: ((kind: SecKind, tag: string, detail?: string) => void) | undefined;
 
-  constructor(o: { now: () => number; write: (line: string) => void; throttleMs: number; summaryMs: number; salt?: string }) {
+  constructor(o: {
+    now: () => number;
+    write: (line: string) => void;
+    throttleMs: number;
+    summaryMs: number;
+    salt?: string;
+    /** Cada linha escrita (mesmo throttle do log): alimenta os eventos do observador. Nunca recebe o IP. */
+    onLine?: (kind: SecKind, tag: string, detail?: string) => void;
+  }) {
     this.now = o.now;
     this.write = o.write;
+    this.onLine = o.onLine;
     this.throttleMs = o.throttleMs;
     this.summaryMs = o.summaryMs;
     this.salt = o.salt ?? randomBytes(16).toString('hex');
@@ -341,6 +351,7 @@ export class SecurityLog {
     const line: Record<string, unknown> = { t, ev: 'sec', kind, tag, n: cur?.suppressed ?? 0 };
     if (detail !== undefined) line.d = String(detail).slice(0, 80);
     this.write(JSON.stringify(line));
+    this.onLine?.(kind, tag, detail === undefined ? undefined : String(detail).slice(0, 80));
   }
 
   /** Escreve o resumo periódico, se houve eventos desde o último. */
