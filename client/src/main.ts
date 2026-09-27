@@ -95,6 +95,10 @@ function onMsg(msg: ServerMsg): void {
       return;
     case 'b_start':
       battle?.destroy();
+      if (msg.spectate) {
+        deadEl?.remove();
+        deadEl = null;
+      }
       battle = new BattleUi(msg, (a) => net.send({ t: 'act', a }));
       return;
     case 'b_turn':
@@ -121,7 +125,7 @@ function onMsg(msg: ServerMsg): void {
       battle?.destroy();
       battle = null;
       deadEl?.remove();
-      deadEl = showEliminated(msg.by, msg.place, () => toMenu());
+      deadEl = showEliminated(msg.by, msg.place, msg.reason, () => toMenu());
       return;
     case 'end':
       cleanupGame();

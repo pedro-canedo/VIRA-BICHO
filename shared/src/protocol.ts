@@ -83,6 +83,8 @@ export interface Snap {
   view: number | null;
   crown: { x: number; y: number } | null;
   lb: LeaderRow[];
+  /** Finalistas do Duelo Final, quando ele está acontecendo. */
+  duel: { a: string; b: string } | null;
 }
 
 export interface FighterInfo {
@@ -113,7 +115,17 @@ export type ServerMsg =
     }
   | { t: 'start'; you: number; w: number; h: number; tiles: string; fruits: Fruit[]; players: number }
   | Snap
-  | { t: 'b_start'; id: number; kind: 'pvp' | 'wild'; you: FighterInfo; opp: FighterInfo; turn: number; ms: number }
+  | {
+      t: 'b_start';
+      id: number;
+      kind: 'pvp' | 'wild' | 'final';
+      you: FighterInfo;
+      opp: FighterInfo;
+      turn: number;
+      ms: number;
+      /** true para quem só assiste (o Duelo Final é transmitido para todos). */
+      spectate?: boolean;
+    }
   | { t: 'b_turn'; id: number; turn: number; ms: number }
   | {
       t: 'b_reveal';
@@ -130,10 +142,10 @@ export type ServerMsg =
       winner: 'you' | 'opp' | 'tie';
       text: string;
     }
-  | { t: 'b_end'; id: number; result: 'win' | 'lose' | 'draw' | 'flee'; text: string }
+  | { t: 'b_end'; id: number; result: 'win' | 'lose' | 'draw' | 'flee' | 'over'; text: string }
   | { t: 'feed'; text: string; kind: 'steal' | 'elim' | 'evo' | 'info' | 'phase' }
   | { t: 'toast'; text: string }
-  | { t: 'elim'; by: string | null; place: number }
+  | { t: 'elim'; by: string | null; place: number; reason: 'batalha' | 'zona' | 'duelo' }
   | {
       t: 'end';
       winner: { name: string; look: Look } | null;

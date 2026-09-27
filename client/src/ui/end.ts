@@ -5,14 +5,15 @@ import { buildShareCard } from './sharecard';
 
 type EndMsg = Extract<ServerMsg, { t: 'end' }>;
 
-export function showEliminated(by: string | null, place: number, onMenu: () => void): HTMLElement {
+export function showEliminated(by: string | null, place: number, reason: 'batalha' | 'zona' | 'duelo', onMenu: () => void): HTMLElement {
+  const why = reason === 'duelo' ? 'Você ficou fora do Duelo Final: só os 2 mais evoluídos seguem.' : by ? `${by} te eliminou.` : 'A zona te consumiu.';
   const el = mount(
     h(
       'div',
       { class: 'card dead stack' },
       h('div', { class: 'place' }, `#${place}`),
-      h('div', { style: 'text-align:center;font-weight:900;font-size:18px' }, by ? `${by} te eliminou.` : 'A zona te consumiu.'),
-      h('p', { class: 'muted', style: 'text-align:center;margin:0' }, by ? `Assistindo ${by}...` : 'Assistindo a partida...'),
+      h('div', { style: 'text-align:center;font-weight:900;font-size:18px' }, why),
+      h('p', { class: 'muted', style: 'text-align:center;margin:0' }, reason === 'duelo' ? 'O duelo vai começar...' : by ? `Assistindo ${by}...` : 'Assistindo a partida...'),
       h('div', { class: 'row' }, h('button', { class: 'btn', onclick: () => el.remove() }, '👀 Assistir'), h('button', { class: 'btn primary', onclick: onMenu }, 'Menu')),
     ),
   );

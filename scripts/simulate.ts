@@ -8,7 +8,10 @@ export interface SimResult {
   mapSize: number;
   winnerStage: number;
   winnerForm: string;
-  battles: { wild: number; pvp: number };
+  battles: { wild: number; pvp: number; final: number };
+  /** Momento em que o Duelo Final começou (ms de partida) e se os finalistas eram os 2 mais evoluídos. */
+  duelAt: number | null;
+  duelTopTwo: boolean;
   steals: number;
   /** O líder aos 3:00 venceu a partida? */
   leaderAt3Won: boolean;
@@ -22,12 +25,33 @@ export function simulate(seed: number, players: number): SimResult {
   let now = 1_000_000;
   room.start(now, players);
   const battlesSeen = new Set<number>();
-  const counts = { wild: 0, pvp: 0 };
+  const counts = { wild: 0, pvp: 0, final: 0 };
+  let duelAt: number | null = null;
+  let duelTopTwo = false;
+  let rankBefore: number[] = [];
   let leaderAt3: number | null = null;
   let stageAt2: number[] = [];
+  const key = (p: { stage: number; trophies: number; hp: number; xp: number; id: number }, mhp: number) => [p.stage, p.trophies, p.hp / mhp, p.xp, -p.id];
   while (room.state === 'play') {
     now += BALANCE.tickMs;
+    // Ranking antes do tick: o duelo pode começar dentro dele.
+    if (duelAt === null) {
+      rankBefore = room
+        .alivePlayers()
+        .sort((p, q) => {
+          const a = key(p, room.maxHpOf(p));
+          const b = key(q, room.maxHpOf(q));
+          for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return b[i] - a[i];
+          return 0;
+        })
+        .map((p) => p.id);
+    }
     room.tick(now);
+    if (duelAt === null && room.duel) {
+      duelAt = room.elapsed;
+      const ids = [room.duel.a.id, room.duel.b.id].sort();
+      duelTopTwo = JSON.stringify(ids) === JSON.stringify(rankBefore.slice(0, 2).sort());
+    }
     for (const bt of room.battles.values()) {
       if (battlesSeen.has(bt.id)) continue;
       battlesSeen.add(bt.id);
@@ -52,6 +76,8 @@ export function simulate(seed: number, players: number): SimResult {
     winnerStage: winner.stage,
     winnerForm: room.look(winner).form,
     battles: counts,
+    duelAt,
+    duelTopTwo,
     steals: all.reduce((s, p) => s + p.stats.steals, 0),
     leaderAt3Won: leaderAt3 === winner.id,
     stageAt2,

@@ -18,7 +18,7 @@ interface FighterView {
   info: FighterInfo;
 }
 
-function fighterView(info: FighterInfo, side: 'you' | 'opp'): FighterView {
+function fighterView(info: FighterInfo, side: 'you' | 'opp', spectate: boolean): FighterView {
   const bar = h('i', { style: `width:${(100 * info.hp) / info.mhp}%` });
   const hp = h('div', { class: 'hpnum' }, `${info.hp}/${info.mhp}`);
   const charged = h('div', { class: 'charged' });
@@ -27,7 +27,7 @@ function fighterView(info: FighterInfo, side: 'you' | 'opp'): FighterView {
     'div',
     { class: `fighter ${side}` },
     creatureImg(info.look, 3),
-    h('div', { class: 'fname' }, side === 'you' ? 'Você' : info.name),
+    h('div', { class: 'fname' }, side === 'you' && !spectate ? 'Você' : info.name),
     h('div', { class: 'ftype' }, species + (info.trophies ? ` · 🏆${info.trophies}` : '')),
     h('div', { class: 'bar' }, bar),
     hp,
@@ -50,14 +50,16 @@ export class BattleUi {
   private deadline = 0;
   private windowMs = 1;
   readonly id: number;
+  readonly spectate: boolean;
 
   constructor(
     msg: Start,
     private onAct: (a: Action) => void,
   ) {
     this.id = msg.id;
-    this.you = fighterView(msg.you, 'you');
-    this.opp = fighterView(msg.opp, 'opp');
+    this.spectate = !!msg.spectate;
+    this.you = fighterView(msg.you, 'you', this.spectate);
+    this.opp = fighterView(msg.opp, 'opp', this.spectate);
     this.buttons = (['ataque', 'defesa', 'carga'] as const).map(
       (a) => h('button', { class: `btn act ${a}`, onclick: () => this.choose(a) }, h('span', { class: 'ico' }, ICON[a]), NAME[a], h('small', {}, BEATS[a])) as HTMLButtonElement,
     );
@@ -69,10 +71,17 @@ export class BattleUi {
         this.revealEl,
         this.textEl,
         h('div', { class: 'timer' }, this.timerBar),
-        h('div', { class: 'actions' }, ...this.buttons),
+        this.spectate ? h('div', { class: 'muted small', style: 'text-align:center' }, '👀 Você está assistindo') : h('div', { class: 'actions' }, ...this.buttons),
       ),
     );
-    this.textEl.textContent = msg.kind === 'wild' ? 'Um bicho selvagem! Escolha sua ação.' : 'Duelo! Escolha em segredo.';
+    if (msg.kind === 'final') this.root.classList.add('final');
+    this.textEl.textContent = this.spectate
+      ? `DUELO FINAL: ${msg.you.name} contra ${msg.opp.name}!`
+      : msg.kind === 'final'
+        ? 'DUELO FINAL! Quem vencer leva a partida.'
+        : msg.kind === 'wild'
+          ? 'Um bicho selvagem! Escolha sua ação.'
+          : 'Duelo! Escolha em segredo.';
     this.startTurn(msg.turn, msg.ms);
     window.addEventListener('keydown', this.onKey);
   }
@@ -90,7 +99,7 @@ export class BattleUi {
       b.disabled = false;
       b.classList.remove('chosen');
     });
-    if (turn > 1) this.textEl.textContent = 'Escolha sua próxima ação.';
+    if (turn > 1) this.textEl.textContent = this.spectate ? 'Os dois escolhem em segredo...' : 'Escolha sua próxima ação.';
     this.deadline = performance.now() + ms;
     this.windowMs = ms;
     cancelAnimationFrame(this.raf);
@@ -103,7 +112,7 @@ export class BattleUi {
   }
 
   private choose(a: Action): void {
-    if (this.buttons[0].disabled) return;
+    if (this.spectate || this.buttons[0].disabled) return;
     this.onAct(a);
     this.buttons.forEach((b) => {
       b.disabled = true;
@@ -117,7 +126,7 @@ export class BattleUi {
     this.timerBar.style.width = '0%';
     this.buttons.forEach((b) => (b.disabled = true));
     this.revealEl.replaceChildren(h('span', {}, ICON[msg.you]), h('span', { class: 'muted', style: 'font-size:18px;align-self:center' }, 'vs'), h('span', {}, ICON[msg.opp]));
-    const lead = msg.winner === 'you' ? '✅ ' : msg.winner === 'opp' ? '❌ ' : '🤝 ';
+    const lead = this.spectate ? '' : msg.winner === 'you' ? '✅ ' : msg.winner === 'opp' ? '❌ ' : '🤝 ';
     this.textEl.textContent = lead + msg.text;
     const set = (v: FighterView, hp: number, dmg: number, ch: boolean) => {
       v.bar.style.width = `${Math.max(0, (100 * hp) / v.info.mhp)}%`;
@@ -137,7 +146,7 @@ export class BattleUi {
     cancelAnimationFrame(this.raf);
     window.removeEventListener('keydown', this.onKey);
     const cls = msg.result === 'win' ? 'win' : msg.result === 'lose' ? 'lose' : '';
-    const title = msg.result === 'win' ? 'VITÓRIA!' : msg.result === 'lose' ? 'DERROTA' : msg.result === 'draw' ? 'EMPATE' : 'FUGIU';
+    const title = { win: 'VITÓRIA!', lose: 'DERROTA', draw: 'EMPATE', flee: 'FUGIU', over: 'FIM' }[msg.result];
     this.root.querySelector('.actions')?.remove();
     this.root.querySelector('.timer')?.remove();
     this.root.append(h('div', { class: `result ${cls}` }, title), h('div', { class: 'btext' }, msg.text));

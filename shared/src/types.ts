@@ -12,7 +12,7 @@ export const MAX_STAGE: Stage = 3;
 export type Action = 'ataque' | 'defesa' | 'carga';
 export const ACTIONS: readonly Action[] = ['ataque', 'defesa', 'carga'];
 
-export type Phase = 'coleta' | 'cacada' | 'final' | 'subita' | 'fim';
+export type Phase = 'coleta' | 'cacada' | 'final' | 'duelo' | 'fim';
 
 export type TypePoints = Record<Elem, number>;
 

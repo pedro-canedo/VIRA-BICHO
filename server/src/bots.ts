@@ -77,7 +77,7 @@ export function botThink(room: Room, p: Player, now: number): void {
   if (p.target !== null && room.entity(p.target)) return;
 
   // 3. Caçar jogadores na Caçada/Final.
-  const endgame = room.phase === 'final' || room.phase === 'subita';
+  const endgame = room.phase === 'final';
   if (hunting && (endgame ? hpPct(p) > 0.25 : hpPct(p) > 0.45 && room.rng.chance(brain.aggro))) {
     const prey = players
       .filter((q) => chebyshev(p, q) <= 10 && q.shieldUntil <= now)

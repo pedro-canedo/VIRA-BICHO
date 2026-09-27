@@ -67,6 +67,8 @@ export class Room {
   totalPlayers = 0;
   /** Sala sem nenhum humano conectado durante a partida. */
   abandoned = false;
+  /** Finalistas do Duelo Final (quando começou). */
+  duel: { a: Player; b: Player } | null = null;
 
   private nextId = 1;
   private lastLobbyAt = 0;
@@ -332,15 +334,22 @@ export class Room {
     this.applyZone(dt);
     this.maintainWilds(now, false);
     this.updateCrown(now);
+    // Sobraram só 2 depois da Coleta: a decisão vai para o Duelo Final.
+    if ((this.phase === 'cacada' || this.phase === 'final') && this.alivePlayers().length === 2) this.startDuel();
     this.checkEnd();
     if (this.state === 'play') this.sendSnapshots();
   }
 
   private updatePhase(): void {
+    if (this.phase === 'duelo') return; // zona congelada durante o duelo
     const el = this.elapsed;
     const P = BALANCE.phases;
     const Z = BALANCE.zone;
     const r0 = this.zone.r0;
+    if (el >= P.finalEnd) {
+      this.startDuel();
+      return;
+    }
     let phase: Phase;
     if (el < P.coletaEnd) {
       phase = 'coleta';
@@ -350,20 +359,15 @@ export class Room {
       phase = 'cacada';
       this.zone.r = lerp(r0, r0 * Z.cacadaFrac, (el - P.coletaEnd) / (P.cacadaEnd - P.coletaEnd));
       this.zone.tr = r0 * Z.cacadaFrac;
-    } else if (el < P.finalEnd) {
+    } else {
       phase = 'final';
       this.zone.r = lerp(r0 * Z.cacadaFrac, Z.finalRadius, (el - P.cacadaEnd) / (P.finalEnd - P.cacadaEnd));
       this.zone.tr = Z.finalRadius;
-    } else {
-      phase = 'subita';
-      this.zone.r = lerp(Z.finalRadius, 0, (el - P.finalEnd) / (P.suddenEnd - P.finalEnd));
-      this.zone.tr = 0;
     }
     if (phase !== this.phase) {
       this.phase = phase;
       if (phase === 'cacada') this.feed('A Caçada começou! Agora dá para desafiar outros jogadores. A zona está fechando.', 'phase');
-      if (phase === 'final') this.feed('Fase final! Os selvagens sumiram e cada derrota custa 2 estágios.', 'phase');
-      if (phase === 'subita') this.feed('MORTE SÚBITA! A zona vai sumir: sobrevive quem aguentar mais.', 'phase');
+      if (phase === 'final') this.feed('Fase final! Os selvagens sumiram e cada derrota custa 2 estágios. Aos 5:00, os 2 mais evoluídos vão para o Duelo Final.', 'phase');
     }
   }
 
@@ -482,7 +486,14 @@ export class Room {
   }
 
   private choiceMs(bt: Battle): number {
+    if (bt.kind === 'final') return BALANCE.duel.choiceMs;
     return bt.kind === 'wild' ? BALANCE.battle.choiceMsWild : BALANCE.battle.choiceMsPlayer;
+  }
+
+  /** Quem assiste a uma batalha: só o Duelo Final é transmitido para todos. */
+  private spectators(bt: Battle): Member[] {
+    if (bt.kind !== 'final') return [];
+    return [...this.members].filter((m) => m.player !== bt.a && m.player !== bt.b);
   }
 
   private scheduleAuto(bt: Battle): void {
@@ -493,10 +504,10 @@ export class Room {
     else bt.autoAt.b = b.bot ? this.now + 500 + this.rng.next() * Math.min(2200, ms - 700) : null;
   }
 
-  startBattle(a: Player, b: Entity): void {
+  startBattle(a: Player, b: Entity, kind: Battle['kind'] = b.kind === 'wild' ? 'wild' : 'pvp'): void {
     const bt: Battle = {
       id: this.nextId++,
-      kind: b.kind === 'wild' ? 'wild' : 'pvp',
+      kind,
       a,
       b,
       turn: 1,
@@ -521,6 +532,9 @@ export class Room {
     if (b.kind === 'player') {
       this.send(b, { t: 'b_start', id: bt.id, kind: bt.kind, you: this.fighterInfo(b, false), opp: this.fighterInfo(a, false), turn: 1, ms });
     }
+    for (const m of this.spectators(bt)) {
+      m.conn.send({ t: 'b_start', id: bt.id, kind: bt.kind, you: this.fighterInfo(a, false), opp: this.fighterInfo(b, false), turn: 1, ms, spectate: true });
+    }
   }
 
   private autoChoice(bt: Battle, side: Side): Action {
@@ -538,7 +552,7 @@ export class Room {
         }
         if ((bt.choice.a && bt.choice.b) || now >= bt.deadline) this.resolve(bt);
       } else if (now >= bt.deadline) {
-        const over = bt.a.hp <= 0 || bt.b.hp <= 0 || bt.turn >= BALANCE.battle.maxTurns;
+        const over = bt.a.hp <= 0 || bt.b.hp <= 0 || (bt.kind !== 'final' && bt.turn >= BALANCE.battle.maxTurns);
         if (over) this.finishBattle(bt);
         else {
           bt.turn++;
@@ -549,6 +563,7 @@ export class Room {
           const ms = this.choiceMs(bt);
           this.send(bt.a, { t: 'b_turn', id: bt.id, turn: bt.turn, ms });
           if (bt.b.kind === 'player') this.send(bt.b, { t: 'b_turn', id: bt.id, turn: bt.turn, ms });
+          for (const m of this.spectators(bt)) m.conn.send({ t: 'b_turn', id: bt.id, turn: bt.turn, ms });
         }
       }
     }
@@ -558,13 +573,21 @@ export class Room {
     const ca = bt.choice.a ?? 'defesa';
     const cb = bt.choice.b ?? 'defesa';
     const r = resolveTurn(this.combatant(bt.a, bt.charged.a), this.combatant(bt.b, bt.charged.b), ca, cb);
+    // Fúria da arena: no Duelo Final, depois de alguns turnos, os dois perdem HP a cada turno.
+    const fury = bt.kind === 'final' && bt.turn >= BALANCE.duel.furyFromTurn;
+    if (fury) {
+      r.dmgToA += Math.round(BALANCE.duel.furyPct * this.maxHpOf(bt.a));
+      r.dmgToB += Math.round(BALANCE.duel.furyPct * this.maxHpOf(bt.b));
+      r.text += ' A fúria da arena queima os dois!';
+    }
     bt.a.hp -= r.dmgToA;
     bt.b.hp -= r.dmgToB;
     bt.charged = { a: r.chargedA, b: r.chargedB };
     bt.phase = 'reveal';
     bt.deadline = this.now + BALANCE.battle.revealMs;
     const hes = (c: Action | null, who: string) => (c === null ? ` ${who} hesitou e se defendeu.` : '');
-    const view = (side: Side) => {
+    const nameOf = (e: Entity) => (e.kind === 'player' ? e.name : 'O bicho');
+    const view = (side: Side, spectator = false) => {
       const you = side === 'a' ? bt.a : bt.b;
       const opp = side === 'a' ? bt.b : bt.a;
       const w = r.winner === 'tie' ? 'tie' : r.winner === side ? 'you' : 'opp';
@@ -581,14 +604,17 @@ export class Room {
         chYou: side === 'a' ? r.chargedA : r.chargedB,
         chOpp: side === 'a' ? r.chargedB : r.chargedA,
         winner: w as 'you' | 'opp' | 'tie',
-        text: r.text + hes(side === 'a' ? bt.choice.a : bt.choice.b, 'Você') + hes(side === 'a' ? bt.choice.b : bt.choice.a, 'O oponente'),
+        text: spectator
+          ? r.text + hes(bt.choice.a, nameOf(bt.a)) + hes(bt.choice.b, nameOf(bt.b))
+          : r.text + hes(side === 'a' ? bt.choice.a : bt.choice.b, 'Você') + hes(side === 'a' ? bt.choice.b : bt.choice.a, 'O oponente'),
       };
     };
     this.send(bt.a, view('a'));
     if (bt.b.kind === 'player') this.send(bt.b, view('b'));
+    for (const m of this.spectators(bt)) m.conn.send(view('a', true));
   }
 
-  private endFor(p: Player, bt: Battle, result: 'win' | 'lose' | 'draw' | 'flee', text: string): void {
+  private endFor(p: Player, bt: Battle, result: 'win' | 'lose' | 'draw' | 'flee' | 'over', text: string): void {
     this.send(p, { t: 'b_end', id: bt.id, result, text });
   }
 
@@ -599,6 +625,11 @@ export class Room {
     const a = bt.a;
     const b = bt.b;
     const now = this.now;
+
+    if (bt.kind === 'final' && b.kind === 'player') {
+      this.finishDuel(bt, a, b);
+      return;
+    }
 
     if (b.kind === 'wild') {
       const wildDown = b.hp <= 0;
@@ -651,12 +682,12 @@ export class Room {
     if (loser.stage === 0) {
       this.endFor(winner, bt, 'win', `Você eliminou ${loser.name}!`);
       this.endFor(loser, bt, 'lose', `${winner.name} te eliminou.`);
-      this.eliminate(loser, winner.name, winner.id);
+      this.eliminate(loser, winner.name, winner.id, 'batalha');
       this.pushHistory(winner, `Eliminou ${loser.name}`);
       this.gainXp(winner, 2);
     } else {
       const stolen = loser.stage;
-      const lost = this.phase === 'final' || this.phase === 'subita' ? BALANCE.finalLossStages : 1;
+      const lost = this.phase === 'final' ? BALANCE.finalLossStages : 1;
       this.setStage(loser, Math.max(0, loser.stage - lost) as Stage, BALANCE.loserHpPct);
       loser.xp = 0;
       loser.shieldUntil = now + BALANCE.hungerShieldMs;
@@ -685,7 +716,7 @@ export class Room {
     }
   }
 
-  private eliminate(p: Player, by: string | null, killerId: number | null): void {
+  private eliminate(p: Player, by: string | null, killerId: number | null, reason: 'batalha' | 'zona' | 'duelo'): void {
     const place = this.alivePlayers().length;
     p.alive = false;
     p.place = place;
@@ -693,24 +724,96 @@ export class Room {
     p.target = null;
     p.eliminatedBy = by;
     p.killerId = killerId;
-    this.pushHistory(p, by ? `Eliminado por ${by}` : 'Eliminado pela zona');
-    this.send(p, { t: 'elim', by, place });
-    this.feed(by ? `${p.name} foi eliminado por ${by}.` : `${p.name} foi consumido pela zona.`, 'elim');
+    this.pushHistory(p, reason === 'duelo' ? 'Ficou fora do Duelo Final' : by ? `Eliminado por ${by}` : 'Eliminado pela zona');
+    this.send(p, { t: 'elim', by, place, reason });
+    if (reason !== 'duelo') this.feed(by ? `${p.name} foi eliminado por ${by}.` : `${p.name} foi consumido pela zona.`, 'elim');
     for (const q of this.players.values()) if (q.target === p.id) q.target = null;
+  }
+
+  // ---------------------------------------------------------------- duelo final
+
+  /** Ordem de evolução: estágio, troféus, vida, XP (empate: quem entrou antes). */
+  private rankPlayers(list: Player[]): Player[] {
+    return [...list].sort(
+      (p, q) => q.stage - p.stage || q.trophies - p.trophies || q.hp / maxHp(q.stage) - p.hp / maxHp(p.stage) || q.xp - p.xp || p.id - q.id,
+    );
+  }
+
+  /**
+   * Duelo Final: só os 2 mais evoluídos continuam. Batalhas em andamento são canceladas
+   * sem troca de estágio, os demais saem com a colocação do ranking e os finalistas
+   * lutam no centro com HP cheio, sem limite de turnos.
+   */
+  private startDuel(): void {
+    if (this.phase === 'duelo' || this.state !== 'play') return;
+    this.phase = 'duelo';
+    for (const bt of [...this.battles.values()]) {
+      this.battles.delete(bt.id);
+      bt.a.battle = null;
+      bt.b.battle = null;
+      for (const e of [bt.a, bt.b]) {
+        if (e.kind !== 'player') continue;
+        e.hp = Math.max(1, e.hp);
+        this.endFor(e, bt, 'over', 'A arena convocou o Duelo Final! Esta batalha foi cancelada.');
+      }
+    }
+    this.wilds.clear();
+    const ranked = this.rankPlayers(this.alivePlayers());
+    const out = ranked.length - 2;
+    for (let i = ranked.length - 1; i >= 2; i--) this.eliminate(ranked[i], null, null, 'duelo');
+    const [a, b] = ranked;
+    if (!a || !b) return;
+    const pa = nearestWalkable(this.map, this.zone.x - 1, this.zone.y);
+    const pb = nearestWalkable(this.map, this.zone.x + 1, this.zone.y);
+    for (const [p, at] of [
+      [a, pa],
+      [b, pb],
+    ] as const) {
+      p.x = at.x;
+      p.y = at.y;
+      p.path = [];
+      p.target = null;
+      p.hp = maxHp(p.stage);
+      p.shieldUntil = 0;
+      p.hungerUntil = 0;
+      this.pushHistory(p, 'Chegou ao Duelo Final');
+    }
+    this.zone.r = this.zone.tr = BALANCE.zone.finalRadius;
+    this.duel = { a, b };
+    if (out > 0) this.feed(`${out} jogador(es) ficaram de fora: só os 2 mais evoluídos seguem.`, 'elim');
+    this.feed(`DUELO FINAL: ${a.name} contra ${b.name}! Quem vencer leva a partida.`, 'phase');
+    this.startBattle(a, b, 'final');
+  }
+
+  private finishDuel(bt: Battle, a: Player, b: Player): void {
+    const pa = a.hp / maxHp(a.stage);
+    const pb = b.hp / maxHp(b.stage);
+    let winner: Player;
+    if ((a.hp <= 0) !== (b.hp <= 0)) winner = a.hp > 0 ? a : b;
+    else if (pa !== pb) winner = pa > pb ? a : b;
+    else winner = this.rng.chance(0.5) ? a : b;
+    const loser = winner === a ? b : a;
+    winner.hp = Math.max(1, winner.hp);
+    winner.stats.wins++;
+    this.endFor(winner, bt, 'win', 'Você venceu o Duelo Final e a partida!');
+    this.endFor(loser, bt, 'lose', `${winner.name} venceu o Duelo Final.`);
+    for (const m of this.spectators(bt)) m.conn.send({ t: 'b_end', id: bt.id, result: 'over', text: `${winner.name} venceu o Duelo Final!` });
+    this.pushHistory(winner, `Venceu o duelo contra ${loser.name}`);
+    this.eliminate(loser, winner.name, winner.id, 'batalha');
   }
 
   // ---------------------------------------------------------------- zona, selvagens, coroa
 
   private applyZone(dt: number): void {
     const sec = dt / 1000;
-    // Na fase final e na morte súbita, a zona queima até quem está batalhando.
-    const endgame = this.phase === 'final' || this.phase === 'subita';
+    if (this.phase === 'duelo') return;
+    // Na fase final, a zona queima até quem está batalhando.
+    const endgame = this.phase === 'final';
     for (const p of this.alivePlayers()) {
       if (p.battle && !endgame) continue;
       const mhp = maxHp(p.stage);
       if (!this.inZone(p)) {
-        const dps = this.phase === 'subita' ? BALANCE.zone.suddenDpsPct : BALANCE.zone.dpsPct;
-        p.hp -= dps * mhp * sec;
+        p.hp -= BALANCE.zone.dpsPct * mhp * sec;
         this.toast(p, 'Você está fora da zona! Volte para o círculo.');
         // Em batalha, o HP zerado é resolvido pelo fim do turno.
         if (p.hp <= 0 && !p.battle) this.zoneLoss(p);
@@ -722,7 +825,7 @@ export class Room {
 
   private zoneLoss(p: Player): void {
     if (p.stage === 0) {
-      this.eliminate(p, null, null);
+      this.eliminate(p, null, null, 'zona');
       return;
     }
     this.setStage(p, (p.stage - 1) as Stage, BALANCE.loserHpPct);
@@ -883,6 +986,7 @@ export class Room {
         view: v.id,
         crown,
         lb,
+        duel: this.duel ? { a: this.duel.a.name, b: this.duel.b.name } : null,
         me: {
           id: p.id,
           x: p.x,

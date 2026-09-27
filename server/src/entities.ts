@@ -57,7 +57,7 @@ export type Side = 'a' | 'b';
 
 export interface Battle {
   id: number;
-  kind: 'pvp' | 'wild';
+  kind: 'pvp' | 'wild' | 'final';
   a: Player;
   b: Entity;
   turn: number;

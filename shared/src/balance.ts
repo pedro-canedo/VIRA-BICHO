@@ -66,10 +66,10 @@ export const BALANCE = {
   phases: {
     coletaEnd: 120_000,
     cacadaEnd: 240_000,
+    /** Início do Duelo Final entre os 2 mais evoluídos. */
     finalEnd: 300_000,
-    /** Morte súbita: a zona fecha até zero entre finalEnd e suddenEnd. */
-    suddenEnd: 330_000,
-    hardCap: 360_000,
+    /** Trava de segurança: o duelo sempre termina bem antes disso. */
+    hardCap: 480_000,
   },
   zone: {
     /** Raio no fim da Caçada, como fração do raio inicial. */
@@ -77,7 +77,14 @@ export const BALANCE = {
     finalRadius: 6,
     /** Dano por segundo fora da zona, como fração do HP máximo. */
     dpsPct: 0.06,
-    suddenDpsPct: 0.25,
+  },
+
+  /** Duelo Final: os 2 mais evoluídos lutam até um cair, com HP cheio. */
+  duel: {
+    choiceMs: 6000,
+    /** A partir deste turno, a "fúria da arena" tira HP dos dois a cada turno, garantindo um fim. */
+    furyFromTurn: 5,
+    furyPct: 0.1,
   },
 
   wild: {
@@ -86,7 +93,7 @@ export const BALANCE = {
     dmg: 6,
     perPlayer: 3,
     /** Multiplicador da população de selvagens por fase. */
-    phaseMult: { coleta: 1, cacada: 0.5, final: 0, subita: 0, fim: 0 },
+    phaseMult: { coleta: 1, cacada: 0.5, final: 0, duelo: 0, fim: 0 },
     min: 14,
     max: 44,
     respawnMs: 5000,

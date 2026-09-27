@@ -568,6 +568,11 @@ input.field:focus {
   }
 }
 
+.battle.final {
+  border-color: #ff5fd2;
+  box-shadow: 0 0 0 3px rgba(255, 95, 210, 0.25), 0 10px 40px rgba(0, 0, 0, 0.6);
+}
+
 .duel {
   display: grid;
   grid-template-columns: 1fr auto 1fr;

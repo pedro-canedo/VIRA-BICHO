@@ -4,24 +4,22 @@ import { Room, type Member } from '../server/src/room';
 import { simulate } from '../scripts/simulate';
 
 describe('partida simulada só com bots', () => {
-  it('termina com um vencedor entre 4:30 e 6:00', () => {
-    const durations: number[] = [];
+  it('termina com um único vencedor, decidido no Duelo Final entre os 2 mais evoluídos', () => {
     for (let seed = 1; seed <= 8; seed++) {
       const r = simulate(seed, 16);
-      durations.push(r.durationMs);
-      expect(r.alive).toBeGreaterThanOrEqual(1);
-      expect(r.durationMs).toBeGreaterThanOrEqual(270_000);
-      expect(r.durationMs).toBeLessThanOrEqual(BALANCE.phases.hardCap + BALANCE.tickMs);
+      expect(r.alive).toBe(1);
+      expect(r.battles.final).toBe(1);
+      expect(r.duelAt).not.toBeNull();
+      expect(r.duelAt!).toBeLessThanOrEqual(BALANCE.phases.finalEnd + BALANCE.tickMs);
+      expect(r.durationMs).toBeLessThan(BALANCE.phases.hardCap);
       expect(r.battles.wild).toBeGreaterThan(50);
       expect(r.battles.pvp).toBeGreaterThan(15);
     }
-    // A morte súbita deve decidir quase todas as partidas antes do limite.
-    expect(durations.filter((d) => d >= BALANCE.phases.hardCap).length).toBeLessThanOrEqual(2);
   });
 
   it('funciona com 8 jogadores (mapa menor)', () => {
     const r = simulate(42, 8);
-    expect(r.alive).toBeGreaterThanOrEqual(1);
+    expect(r.alive).toBe(1);
     expect(r.mapSize).toBe(48);
   });
 });

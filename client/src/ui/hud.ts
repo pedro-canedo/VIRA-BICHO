@@ -9,8 +9,7 @@ const SHORT_STAGE = ['Ovo', 'Filhote', 'Adulto', 'Final'] as const;
 const PHASE_INFO: Record<string, { label: string; next: string; at: number }> = {
   coleta: { label: 'COLETA', next: 'Caçada em', at: BALANCE.phases.coletaEnd },
   cacada: { label: 'CAÇADA', next: 'Final em', at: BALANCE.phases.cacadaEnd },
-  final: { label: 'FINAL', next: 'Morte súbita em', at: BALANCE.phases.finalEnd },
-  subita: { label: 'MORTE SÚBITA', next: 'A zona some em', at: BALANCE.phases.suddenEnd },
+  final: { label: 'FINAL', next: 'Duelo Final em', at: BALANCE.phases.finalEnd },
 };
 
 export class Hud {
@@ -70,14 +69,18 @@ export class Hud {
   }
 
   update(s: Snap): void {
-    const info = PHASE_INFO[s.ph] ?? PHASE_INFO.subita;
     const me = s.me;
-    const outside = me?.alive && Math.hypot(me.x - s.z.x, me.y - s.z.y) >= s.z.r;
-    this.phaseEl.className = `phase${outside || s.ph === 'subita' ? ' danger' : ''}`;
-    this.phaseEl.replaceChildren(
-      h('span', {}, outside ? '⚠ FORA DA ZONA' : info.label),
-      h('span', { class: 'clock' }, `${info.next} ${fmtTime(info.at - s.el)}`),
-    );
+    const outside = me?.alive && s.ph !== 'duelo' && Math.hypot(me.x - s.z.x, me.y - s.z.y) >= s.z.r;
+    this.phaseEl.className = `phase${outside || s.ph === 'duelo' ? ' danger' : ''}`;
+    if (s.ph === 'duelo' && s.duel) {
+      this.phaseEl.replaceChildren(h('span', {}, '⚔ DUELO FINAL'), h('span', { class: 'clock' }, `${s.duel.a} × ${s.duel.b}`));
+    } else {
+      const info = PHASE_INFO[s.ph] ?? PHASE_INFO.final;
+      this.phaseEl.replaceChildren(
+        h('span', {}, outside ? '⚠ FORA DA ZONA' : info.label),
+        h('span', { class: 'clock' }, `${info.next} ${fmtTime(info.at - s.el)}`),
+      );
+    }
     this.aliveEl.textContent = `🐾 ${s.al} vivos`;
 
     this.boardEl.replaceChildren(
