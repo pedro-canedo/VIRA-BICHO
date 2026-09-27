@@ -7,6 +7,7 @@ import {
   FX_MAX_PER_TICK,
   maxHp,
   nearestWalkable,
+  resolveTurn,
   type Action,
   type FxEvent,
   type ServerMsg,
@@ -19,7 +20,7 @@ import { Room, type Member } from '../server/src/room';
 type Ev<K extends FxEvent['k']> = Extract<FxEvent, { k: K }>;
 
 /** Acesso aos internos da fila só para os testes. */
-type RoomFx = { fxq: FxEvent[]; fx(ev: FxEvent): void; sendSnapshots(): void };
+type RoomFx = { fxq: FxEvent[]; fx(ev: FxEvent): void; sendSnapshots(): void; combatant(e: Player, charged: boolean): Parameters<typeof resolveTurn>[0] };
 const internals = (room: Room) => room as unknown as RoomFx;
 
 /** Sala com humanos e bots parados (sem cérebro), para os eventos saírem só do que o teste provoca. */
@@ -294,6 +295,60 @@ describe('eventos visuais (Snap.fx)', () => {
     for (let i = 0; i < 5000 && room.state === 'play' && ofKind('fu').length === 0; i++) tick();
     const fu = ofKind('fu')[0];
     expect(fu).toMatchObject({ a: a.id, b: b.id, va: Math.round(BALANCE.duel.furyPct * maxHp(a.stage)), vb: Math.round(BALANCE.duel.furyPct * maxHp(b.stage)) });
+  });
+
+  it('HP fracionário entre 0 e 0,5 aparece como 1: hp 0 no h e no b_reveal só com FX_KO', () => {
+    const { room, members, me, bots, place, set, tick, advanceTo, lastSnap, choose } = setup();
+    advanceTo(BALANCE.phases.coletaEnd + 1000);
+    tick();
+    const foe = bots[0];
+    set(me, 1);
+    set(foe, 1);
+    place(me, 0);
+    place(foe, 1);
+    room.startBattle(me, foe);
+    const q = internals(room);
+    const dmg = resolveTurn(q.combatant(me, false), q.combatant(foe, false), 'ataque', 'carga').dmgToB;
+    foe.hp = dmg + 0.3; // sobra 0,3 de HP (regeneração/zona deixam o HP fracionário)
+    choose(me, 'ataque', foe, 'carga');
+    const before = members[0].msgs.length;
+    tick();
+    expect(foe.hp).toBeCloseTo(0.3);
+    const h = (lastSnap().fx ?? []).find((e): e is Ev<'h'> => e.k === 'h')!;
+    expect(h).toMatchObject({ d: foe.id, v: dmg, hp: 1 });
+    expect(h.fl & FX_KO).toBe(0);
+    const reveal = members[0].msgs.slice(before).find((m) => m.t === 'b_reveal');
+    expect(reveal).toMatchObject({ hpOpp: 1 });
+    expect(lastSnap().ents.find((e) => e.id === foe.id)?.hp).toBe(1);
+  });
+
+  it('KO só pela fúria (Defesa×Defesa): fu sem h, e o EntSnap do mesmo snapshot traz hp 0', () => {
+    const { room, bots, set, tick, advanceTo, lastSnap, ofKind, choose } = setup();
+    bots.forEach((b, i) => set(b, (i < 2 ? 3 : 1) as Stage));
+    advanceTo(BALANCE.phases.finalEnd);
+    tick();
+    const { a, b } = room.duel!;
+    const bt = a.battle!;
+    const va = Math.round(BALANCE.duel.furyPct * maxHp(a.stage));
+    const furyTurn = () => {
+      for (let i = 0; i < 5000 && !(bt.turn >= BALANCE.duel.furyFromTurn && bt.phase === 'choose'); i++) tick();
+      choose(a, 'defesa', b, 'defesa');
+      const n = ofKind('fu').length;
+      tick();
+      expect(ofKind('fu')).toHaveLength(n + 1);
+      const s = lastSnap();
+      expect((s.fx ?? []).some((e) => e.k === 'h')).toBe(false);
+      return s.ents.find((e) => e.id === a.id)!;
+    };
+    // Primeiro turno de fúria: sobra 0,3 de HP, o duelista segue vivo e aparece com 1.
+    a.hp = va + 0.3;
+    b.hp = maxHp(b.stage);
+    expect(furyTurn().hp).toBe(1);
+    expect(a.battle).toBe(bt);
+    // Próximo turno: a fúria nocauteia; o único sinal no snapshot é o hp 0 do EntSnap junto do fu.
+    a.hp = va;
+    expect(furyTurn().hp).toBe(0);
+    expect(a.hp).toBeLessThanOrEqual(0);
   });
 
   it('a fila respeita FX_MAX_PER_TICK e nenhum snapshot de uma partida inteira passa do teto', () => {

@@ -54,6 +54,8 @@ export type RoomState = 'lobby' | 'play' | 'fim';
 
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 const lerp = (a: number, b: number, t: number) => a + (b - a) * clamp(t, 0, 1);
+/** HP exibido: 0 só com HP <= 0 (nocaute); vivo com HP fracionário abaixo de 0,5 aparece como 1. */
+const shownHp = (hp: number) => (hp <= 0 ? 0 : Math.max(1, Math.round(hp)));
 
 export class Room {
   state: RoomState = 'lobby';
@@ -492,7 +494,7 @@ export class Room {
     return {
       name: e.kind === 'wild' ? `${speciesName(e.elem, 1)} selvagem` : e.name,
       look: this.look(e),
-      hp: Math.max(0, Math.round(e.hp)),
+      hp: shownHp(e.hp),
       mhp: this.maxHpOf(e),
       charged,
       trophies: e.kind === 'wild' ? 0 : e.trophies,
@@ -605,7 +607,7 @@ export class Room {
     const hit = (att: Entity, def: Entity, v: number, act: Action, charged: boolean) => {
       const tm = typeMult(this.look(att), this.look(def));
       const fl = (charged ? FX_CHARGED : 0) | (r.winner === 'tie' ? FX_CLASH : 0) | (def.hp <= 0 ? FX_KO : 0);
-      this.fx({ k: 'h', x: bt.cx, y: bt.cy, bt: bt.id, a: att.id, d: def.id, v, act, m: tm > 1 ? 1 : tm < 1 ? -1 : 0, fl, hp: Math.max(0, Math.round(def.hp)) });
+      this.fx({ k: 'h', x: bt.cx, y: bt.cy, bt: bt.id, a: att.id, d: def.id, v, act, m: tm > 1 ? 1 : tm < 1 ? -1 : 0, fl, hp: shownHp(def.hp) });
     };
     if (baseB > 0) hit(bt.a, bt.b, baseB, ca, chA);
     if (baseA > 0) hit(bt.b, bt.a, baseA, cb, chB);
@@ -627,8 +629,8 @@ export class Room {
         opp: side === 'a' ? cb : ca,
         dmgYou: side === 'a' ? r.dmgToA : r.dmgToB,
         dmgOpp: side === 'a' ? r.dmgToB : r.dmgToA,
-        hpYou: Math.max(0, Math.round(you.hp)),
-        hpOpp: Math.max(0, Math.round(opp.hp)),
+        hpYou: shownHp(you.hp),
+        hpOpp: shownHp(opp.hp),
         chYou: side === 'a' ? r.chargedA : r.chargedB,
         chOpp: side === 'a' ? r.chargedB : r.chargedA,
         winner: w as 'you' | 'opp' | 'tie',
@@ -961,7 +963,7 @@ export class Room {
 
   private entSnap(e: Entity): EntSnap {
     const look = this.look(e);
-    const s: EntSnap = { id: e.id, k: e.kind === 'wild' ? 'w' : 'p', x: e.x, y: e.y, f: look.form, s: look.stage, o: look.order, hp: Math.max(0, Math.round(e.hp)), mhp: this.maxHpOf(e) };
+    const s: EntSnap = { id: e.id, k: e.kind === 'wild' ? 'w' : 'p', x: e.x, y: e.y, f: look.form, s: look.stage, o: look.order, hp: shownHp(e.hp), mhp: this.maxHpOf(e) };
     if (e.battle) s.b = e.battle.id;
     // Selvagens carregados também mostram a Carga (só visual).
     if (e.battle && e.battle.charged[e.battle.a === e ? 'a' : 'b']) s.ch = 1;
@@ -1039,7 +1041,7 @@ export class Room {
           look,
           xp: p.xp,
           xpNeed: p.stage < MAX_STAGE ? BALANCE.xpToEvolve[p.stage] : 0,
-          hp: Math.max(0, Math.round(p.hp)),
+          hp: shownHp(p.hp),
           mhp: maxHp(p.stage),
           points: p.points,
           trophies: p.trophies,
