@@ -1,0 +1,116 @@
+/**
+ * Todos os números do jogo em um só lugar, para facilitar o balanceamento.
+ * Tempos em milissegundos, distâncias em tiles.
+ */
+export const BALANCE = {
+  tickMs: 100,
+  /** Tempo para andar 1 tile. */
+  stepMs: 150,
+  /** Selvagens andam mais devagar. */
+  wildStepMs: 420,
+
+  /** XP necessário para sair de cada estágio (ovo→filhote, filhote→adulto, adulto→final). Cumulativo: 3 / 7 / 12. */
+  xpToEvolve: [3, 4, 5] as readonly number[],
+  hp: [40, 60, 85, 110] as const,
+  dmg: [10, 14, 18, 22] as const,
+
+  typeStrong: 1.5,
+  typeWeak: 0.67,
+  /** O 2º tipo precisa ter pelo menos esta fração do 1º para virar híbrido. */
+  hybridRatio: 0.4,
+  /** O 3º tipo precisa ter pelo menos esta fração do 1º para virar Quimera. */
+  quimeraRatio: 0.7,
+  quimeraMinPoints: 3,
+
+  battle: {
+    choiceMsPlayer: 5000,
+    choiceMsWild: 3000,
+    revealMs: 1400,
+    maxTurns: 4,
+    /** Multiplicadores por resultado do turno. */
+    attackHit: 1,
+    defenseCounter: 0.5,
+    chargeHit: 0.5,
+    tieAttack: 0.5,
+    chargedMult: 2,
+  },
+
+  regenPctPerSec: 0.02,
+  healOnWildPct: 0.15,
+  /** HP (fração do máximo) com que o perdedor de uma batalha volta ao mapa. */
+  loserHpPct: 0.5,
+  /** HP com que o jogador volta depois de perder para um selvagem. */
+  wildLossHpPct: 0.25,
+
+  trophyBonus: 0.1,
+  trophyMax: 3,
+  /** Na fase Final e na Morte súbita, perder custa este número de estágios ("derrota dobrada"). */
+  finalLossStages: 2,
+  /** Fração dos pontos de tipo do perdedor absorvida pelo vencedor. */
+  absorbFrac: 0.5,
+
+  crownXpBonus: 3,
+  crownPingEveryMs: 20000,
+  crownPingShowMs: 4000,
+
+  hungerShieldMs: 5000,
+  hungerXpMs: 30000,
+  hungerXpMult: 2,
+  drawShieldMs: 3000,
+  zoneLossShieldMs: 3000,
+
+  fruitPoints: 3,
+  fruitXp: 1,
+  fruitRespawnMs: 45000,
+
+  phases: {
+    coletaEnd: 120_000,
+    cacadaEnd: 240_000,
+    finalEnd: 300_000,
+    /** Morte súbita: a zona fecha até zero entre finalEnd e suddenEnd. */
+    suddenEnd: 330_000,
+    hardCap: 360_000,
+  },
+  zone: {
+    /** Raio no fim da Caçada, como fração do raio inicial. */
+    cacadaFrac: 0.5,
+    finalRadius: 6,
+    /** Dano por segundo fora da zona, como fração do HP máximo. */
+    dpsPct: 0.06,
+    suddenDpsPct: 0.25,
+  },
+
+  wild: {
+    hpMin: 8,
+    hpMax: 14,
+    dmg: 6,
+    perPlayer: 3,
+    /** Multiplicador da população de selvagens por fase. */
+    phaseMult: { coleta: 1, cacada: 0.5, final: 0, subita: 0, fim: 0 },
+    min: 14,
+    max: 44,
+    respawnMs: 5000,
+  },
+
+  lobby: {
+    minPlayers: 8,
+    maxPlayers: 16,
+    waitMs: 30_000,
+    maxRooms: 4,
+    endLingerMs: 20_000,
+  },
+
+  /** Raio de visão enviado nos snapshots. */
+  viewRadius: 15,
+  /** Distância (Chebyshev) para iniciar uma batalha. */
+  engageRange: 1,
+} as const;
+
+export type Balance = typeof BALANCE;
+
+/** XP total acumulado necessário para chegar ao estágio `s`. */
+export function xpForStage(s: number): number {
+  let total = 0;
+  for (let i = 0; i < s; i++) total += BALANCE.xpToEvolve[i] ?? 0;
+  return total;
+}
