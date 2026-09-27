@@ -6,3 +6,4 @@ export * from './battle';
 export * from './mapgen';
 export * from './pathfinding';
 export * from './protocol';
+export * from './obs';
