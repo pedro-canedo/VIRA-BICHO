@@ -60,10 +60,10 @@ describe('limites do lobby', () => {
     expect(lobby.rooms.size).toBe(3);
   });
 
-  it('taxa de criação por IP: 4 partidas iniciadas seguidas, a 5ª espera', () => {
+  it('taxa de criação por IP: esgota a capacidade de partidas iniciadas e a seguinte espera a recarga', () => {
     const lobby = mkLobby();
     let now = 0;
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < SECURITY.lobby.roomCreate.capacity; i++) {
       const c = mkConn('A');
       lobby.handle(c, hello('create'), now);
       expect(c.last()).toBe('');
@@ -76,7 +76,7 @@ describe('limites do lobby', () => {
     const c5 = mkConn('A');
     lobby.handle(c5, hello('create'), now);
     expect(c5.last()).toContain('criou salas demais');
-    now += 150_000;
+    now += Math.ceil(1000 / SECURITY.lobby.roomCreate.refillPerSec);
     const c6 = mkConn('A');
     lobby.handle(c6, hello('create'), now);
     expect(c6.last()).toBe('');

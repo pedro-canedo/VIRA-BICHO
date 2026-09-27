@@ -13,15 +13,29 @@ import './style.css';
 
 type Screen = 'menu' | 'lobby' | 'game' | 'end';
 
+// Aberto por http:// no domínio público: o WebSocket seria recusado, então vai para https.
+if (location.protocol === 'http:' && location.hostname.endsWith('.caixazen.online')) {
+  location.replace(`https://${location.host}${location.pathname}${location.search}${location.hash}`);
+}
+
 const scene = new GameScene();
-new Phaser.Game({
+const game = new Phaser.Game({
   type: Phaser.AUTO,
   parent: 'game',
   pixelArt: true,
   backgroundColor: '#0b0716',
   scale: { mode: Phaser.Scale.RESIZE, width: window.innerWidth, height: window.innerHeight },
+  // Só o canvas: um toque num botão do HUD que some antes do dedo subir deixava o
+  // ponteiro "preso" e o jogo ignorava todos os toques seguintes (iPhone).
+  input: { windowEvents: false, activePointers: 2 },
   scene: [scene],
 });
+
+/** Solta ponteiros que possam ter ficado presos e reajusta o canvas ao viewport atual. */
+function resetInput(): void {
+  for (const p of game.input?.pointers ?? []) if (p.id > 0) p.reset();
+  game.scale.refresh();
+}
 
 const gameEl = document.getElementById('game')!;
 let screen: Screen = 'menu';
@@ -85,6 +99,7 @@ function onMsg(msg: ServerMsg): void {
       hud = new Hud();
       hud.setMap(msg.w, msg.h, tiles, msg.fruits);
       scene.setWorld(msg.w, msg.h, tiles, msg.fruits);
+      resetInput();
       history.replaceState(null, '', location.pathname);
       return;
     }

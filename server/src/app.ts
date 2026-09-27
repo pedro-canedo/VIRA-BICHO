@@ -164,6 +164,7 @@ export function createApp(opts: AppOptions): App {
   const rssMB = opts.rssMB ?? (() => process.memoryUsage.rss() / 1048576);
   const heapMB = opts.heapMB ?? (() => process.memoryUsage().heapUsed / 1048576);
   const allow = new Set([...DEFAULT_ORIGINS, ...(opts.allowedOrigins ?? [])].map((o) => o.trim().toLowerCase().replace(/\/$/, '')).filter(Boolean));
+  const httpsHosts = new Set([...allow].filter((o) => o.startsWith('https://')).map((o) => o.slice('https://'.length)));
   const trusted = new Set((opts.trustedKeys ?? []).map((k) => normalizeIp(k)).filter(Boolean).map((k) => (isIP(k) ? ipKey(k) : k)));
   const isExempt = (key: string) => key === 'local' || trusted.has(key);
   const started = now();
@@ -226,6 +227,13 @@ export function createApp(opts: AppOptions): App {
       return reply(res, 400, text, 'Bad request', head);
     }
     if (target === 'too_long') return reply(res, 414, text, 'URI too long', head);
+
+    // Aberto por http:// (o túnel não redireciona): o WebSocket seria recusado pelo Origin. Só hosts conhecidos.
+    const visitor = req.headers['cf-visitor'];
+    if (id.viaCloudflare && typeof visitor === 'string' && visitor.includes('"http"')) {
+      const host = String(req.headers.host ?? '').toLowerCase();
+      if (httpsHosts.has(host)) return reply(res, 308, { ...text, location: `https://${host}${req.url ?? '/'}` }, 'Use HTTPS', head);
+    }
 
     if (target.path === '/health') {
       const body = healthPayload(isTrustedLocal(req.socket.remoteAddress, req.headers), lobby, {

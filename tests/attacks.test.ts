@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ServerMsg } from '@vb/shared';
+import { SECURITY } from '../server/src/security';
 import { PUBLIC_ORIGIN, httpGet, sleep, startApp, within, wsClient, type TestClient } from './helpers/app';
 
 let close: (() => Promise<void>) | null = null;
@@ -36,14 +37,14 @@ describe('ataques pelo túnel, de ponta a ponta', () => {
     c.send({ t: 'hello', name: 'C', mode: 'create' });
     await c.waitFor(isErr('salas demais ao mesmo tempo'));
 
-    // Criar, começar e sair em ciclo esgota a taxa de criação (4 no total, 2 já foram).
+    // Criar, começar e sair em ciclo esgota a taxa de criação (2 já foram).
     for (const x of [a, b]) {
       x.send({ t: 'startnow' });
       await x.waitFor((m) => m.t === 'start', 3000);
       x.send({ t: 'leave' });
     }
     await sleep(250); // salas abandonadas somem no tick
-    for (let i = 0; i < 2; i++) {
+    for (let i = 0; i < SECURITY.lobby.roomCreate.capacity - 2; i++) {
       const x = (await wsClient(s.port, tunnel(ip))).client!;
       x.send({ t: 'hello', name: 'X', mode: 'create' });
       await x.waitFor((m) => m.t === 'lobby');

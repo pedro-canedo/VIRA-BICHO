@@ -1,5 +1,7 @@
 import { WS_PATH, type ClientMsg, type ServerMsg } from '@vb/shared';
 
+const isLocalHost = () => /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(location.hostname);
+
 /** Conexão WebSocket com o servidor (wss atrás do túnel, ws em desenvolvimento). */
 export class Net {
   private ws: WebSocket | null = null;
@@ -25,10 +27,19 @@ export class Net {
         this.opening = null;
         resolve();
       };
+      // Sem resposta (rede do celular trocando, servidor reiniciando): não deixa o botão "morto".
+      const timer = window.setTimeout(() => {
+        if (ws.readyState !== WebSocket.CONNECTING) return;
+        this.opening = null;
+        ws.close();
+        reject(new Error('O servidor demorou para responder. Tente de novo.'));
+      }, 8000);
+      ws.addEventListener('open', () => window.clearTimeout(timer));
       ws.onerror = () => {
+        window.clearTimeout(timer);
         this.opening = null;
         // O navegador não expõe o status do handshake (403/429/503).
-        reject(new Error('Não foi possível conectar ao servidor. Tente de novo em instantes.'));
+        reject(new Error(location.protocol === 'http:' && !isLocalHost() ? `Abra o jogo em https://${location.host}` : 'Não foi possível conectar ao servidor. Tente de novo em instantes.'));
       };
       ws.onclose = (ev) => {
         if (this.ws === ws) {
