@@ -343,8 +343,8 @@ describe('eventos de uma partida com clientes ws reais', () => {
     expect(st.players).toEqual({ online: 2, lobby: 2, playing: 0, spectating: 0 });
     expect(st.breakdown).toEqual({ countries: { BR: 1, PT: 1 }, devices: { mobile: 1, desktop: 1 } });
     expect(ofType(st.events, 'join')).toEqual([
-      { name: 'Ana', mode: 'quick', room: room.code, country: 'BR', device: 'mobile' },
-      { name: 'Bia', mode: 'quick', room: room.code, country: 'PT', device: 'desktop' },
+      { name: 'Ana', mode: 'quick', room: room.code, country: 'BR', device: 'mobile', gm: 'rapido' },
+      { name: 'Bia', mode: 'quick', room: room.code, country: 'PT', device: 'desktop', gm: 'rapido' },
     ]);
 
     // Início.
@@ -354,7 +354,7 @@ describe('eventos de uma partida com clientes ws reais', () => {
     const pa = room.players.get(start.you)!;
     const pb = [...room.members].find((m) => m.name === 'Bia')!.player!;
     st = await s.stats();
-    expect(ofType(st.events, 'match_start')).toEqual([{ room: room.code, humans: 2, bots: 6, players: 8 }]);
+    expect(ofType(st.events, 'match_start')).toEqual([{ room: room.code, humans: 2, bots: 6, players: 8, gm: 'rapido' }]);
     expect(st.players).toEqual({ online: 2, lobby: 0, playing: 2, spectating: 0 });
     expect(st.rooms[0]).toMatchObject({ code: room.code, state: 'play', phase: 'coleta', humans: 2, bots: 6, alive: 8 });
 
@@ -401,7 +401,7 @@ describe('eventos de uma partida com clientes ws reais', () => {
     const winner = [...room.players.values()].find((p) => p.place === 1)!;
     st = await s.stats();
     expect(ofType(st.events, 'match_end')).toEqual([
-      { room: room.code, winner: winner.name, form: room.look(winner).form, durationMs: room.endedAt - room.startedAt, humans: 2 },
+      { room: room.code, winner: winner.name, form: room.look(winner).form, durationMs: room.endedAt - room.startedAt, humans: 2, gm: 'rapido' },
     ]);
     expect(st.rooms[0]).toMatchObject({ state: 'fim', phase: 'fim' });
     expect(st.players).toEqual({ online: 2, lobby: 0, playing: 0, spectating: 2 });
@@ -426,7 +426,9 @@ describe('eventos de uma partida com clientes ws reais', () => {
     expect(types.indexOf('duel')).toBeLessThan(types.indexOf('match_end'));
     expect(types.indexOf('match_end')).toBeLessThan(types.indexOf('leave'));
     expect(st.events.map((e) => e.seq)).toEqual(st.events.map((_, i) => i));
-    expect(st.counters).toMatchObject({ joins: 2, matchesStarted: 1, matchesEnded: 1, eliminations: 7, errors: 0 });
+    // eliminations = mortes (com renascimento) + os 7 que saíram no Duelo Final (6 cortados e o perdedor).
+    const deaths = [...room.players.values()].reduce((n, p) => n + p.stats.deaths, 0);
+    expect(st.counters).toMatchObject({ joins: 2, matchesStarted: 1, matchesEnded: 1, eliminations: 7 + deaths, errors: 0 });
     expect(st.counters.battles.wild).toBeGreaterThanOrEqual(1);
     expect(st.counters.battles.pvp).toBeGreaterThanOrEqual(1);
     expect(st.counters.battles.final).toBe(1);

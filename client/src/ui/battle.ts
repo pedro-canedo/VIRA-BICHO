@@ -1,15 +1,51 @@
-import { attackElem, BALANCE, FORM_LABEL, FX_IMPACT_MS, speciesName, typeMult, type Action, type Elem, type FighterInfo, type ServerMsg } from '@vb/shared';
+import {
+  attackElem,
+  BALANCE,
+  BASIC_ACTIONS,
+  FORM_LABEL,
+  FX_IMPACT_MS,
+  isSpecial,
+  levelOf,
+  modsOf,
+  MOVE_LABEL,
+  SPECIAL_INFO,
+  speciesName,
+  typeMult,
+  type Action,
+  type BasicAction,
+  type Elem,
+  type FighterInfo,
+  type Move,
+  type ServerMsg,
+  type SpecialKind,
+} from '@vb/shared';
 import { creatureImg } from '../render/creature';
 import { ELEM_TONE, FORM_COLOR } from '../render/palette';
 import { Anims, countTo, GhostBar, later, play, reduced, stampIn, vibrate } from './anim';
+import { skillIcons, specialColor, titleBadge } from './build';
 import { h, mount } from './dom';
 import { bolt, burst, confetti, converge, RAMP, spell, type Pt } from './fxcanvas';
 
-const ICON: Record<Action, string> = { ataque: '⚔️', defesa: '🛡️', carga: '⚡' };
-const NAME: Record<Action, string> = { ataque: 'Ataque', defesa: 'Defesa', carga: 'Carga' };
-const BEATS: Record<Action, string> = { ataque: 'vence Carga', defesa: 'vence Ataque', carga: 'vence Defesa' };
+const ICON: Record<Move, string> = {
+  ataque: '⚔️',
+  defesa: '🛡️',
+  carga: '⚡',
+  brutal: SPECIAL_INFO.brutal.icon,
+  arcana: SPECIAL_INFO.arcana.icon,
+  armadilha: SPECIAL_INFO.armadilha.icon,
+};
+const BEATS: Record<BasicAction, string> = { ataque: 'vence Carga', defesa: 'vence Ataque', carga: 'vence Defesa' };
 const ELEM_ICON: Record<Elem, string> = { brasa: '🔥', mare: '🌊', broto: '🌿' };
-const ACT_COLOR: Record<Action, string> = { ataque: '#ff4f6d', defesa: '#7cc4ff', carga: '#ffcf3f' };
+const ACT_COLOR: Record<Move, string> = {
+  ataque: '#ff4f6d',
+  defesa: '#7cc4ff',
+  carga: '#ffcf3f',
+  brutal: specialColor('brutal'),
+  arcana: specialColor('arcana'),
+  armadilha: specialColor('armadilha'),
+};
+/** Jogadas que tentam causar dano (no empate, os dois golpes se chocam). */
+const hits = (m: Move) => m === 'ataque' || isSpecial(m);
 const CHARGED_TEXT = '⚡ Carregado: próximo golpe ×2';
 /** Silhueta amarela do lampejo de Carga. */
 const GOLD = 'brightness(0) invert(1) sepia(1) saturate(8)';
@@ -29,6 +65,8 @@ interface FighterView {
   info: FighterInfo;
   hpNow: number;
   side: Side;
+  /** Ícone do Especial na fileira da build (mostra os usos restantes). */
+  sp: HTMLElement | null;
 }
 
 interface Card {
@@ -44,19 +82,35 @@ function fighterView(info: FighterInfo, side: Side, spectate: boolean): FighterV
   const hp = h('div', { class: 'hpnum' }, `${info.hp}/${info.mhp}`);
   const charged = h('div', { class: `charged${info.charged ? ' on' : ''}` }, info.charged ? CHARGED_TEXT : '');
   const body = h('div', { class: 'fbody' }, creatureImg(info.look, 3));
-  const species = info.wild ? FORM_LABEL[info.look.form] : `${speciesName(info.look.form, info.look.stage)} · ${FORM_LABEL[info.look.form]}`;
+  const lv = `Nv ${levelOf(info.look.stage)}`;
+  const species = info.wild ? `${FORM_LABEL[info.look.form]} · ${lv}` : `${speciesName(info.look.form, info.look.stage)} · ${lv}`;
+  // Build visível dos dois lados: título e passivas (o Especial com os usos restantes)
+  const skills = info.wild ? [] : (info.skills ?? []);
+  const icons = skills.length ? skillIcons(skills, 'sicons fsk') : null;
+  const sp = icons?.querySelector<HTMLElement>('i.sp') ?? null;
+  const build = skills.length ? h('div', { class: 'fbuild' }, titleBadge(skills, 'tbadge sm'), icons) : null;
   const root = h(
     'div',
     { class: `fighter ${side}` },
     body,
     h('div', { class: 'fname' }, side === 'you' && !spectate ? 'Você' : info.name),
     h('div', { class: 'ftype' }, species + (info.trophies ? ` · 🏆${info.trophies}` : '')),
+    build,
     bar.el,
     hp,
     charged,
   );
   if (info.charged) root.classList.add('charging');
-  return { root, body, bar, hp, charged, info, hpNow: info.hp, side };
+  const v: FighterView = { root, body, bar, hp, charged, info, hpNow: info.hp, side, sp };
+  setUses(v, info.specialLeft ?? 0);
+  return v;
+}
+
+/** Usos restantes do Especial no ícone da build. */
+function setUses(v: FighterView, n: number): void {
+  if (!v.sp) return;
+  v.sp.dataset.n = `${n}×`;
+  v.sp.classList.toggle('used', n <= 0);
 }
 
 function makeCard(side: Side): Card {
@@ -110,6 +164,11 @@ export class BattleUi {
   private pending: (() => void) | null = null;
   private fx = new Anims();
   private kind: Start['kind'];
+  /** Especial da sua build e quantos usos ainda restam nesta batalha. */
+  private special: SpecialKind | null;
+  private spLeft: number;
+  private spBtn: HTMLButtonElement;
+  private spUses = h('i', { class: 'uses' });
   readonly id: number;
   readonly spectate: boolean;
 
@@ -123,14 +182,31 @@ export class BattleUi {
     this.you = fighterView(msg.you, 'you', this.spectate);
     this.opp = fighterView(msg.opp, 'opp', this.spectate);
     this.ch = { you: msg.you.charged, opp: msg.opp.charged };
+    this.special = msg.you.special ?? null;
+    this.spLeft = this.special ? (msg.you.specialLeft ?? 0) : 0;
     this.timerEl.append(this.timerBar);
-    this.buttons = (['ataque', 'defesa', 'carga'] as const).map((a) => {
-      const b = h('button', { class: `btn act ${a}`, onclick: () => this.choose(a) }, h('span', { class: 'ico' }, ICON[a]), NAME[a], h('small', {}, BEATS[a])) as HTMLButtonElement;
+    const press = (b: HTMLButtonElement) => {
       // Afunda na hora do toque, antes de o servidor responder
       b.addEventListener('pointerdown', () => b.classList.add('press'));
       for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) b.addEventListener(ev, () => b.classList.remove('press'));
       return b;
-    });
+    };
+    this.buttons = BASIC_ACTIONS.map((a) => press(h('button', { class: `btn act ${a}`, onclick: () => this.choose(a) }, h('span', { class: 'ico' }, ICON[a]), MOVE_LABEL[a], h('small', {}, BEATS[a])) as HTMLButtonElement));
+    // 4º botão: o Especial da build (uma vez por batalha, duas com Tempestade)
+    const sp = this.special ? SPECIAL_INFO[this.special] : null;
+    this.spBtn = press(
+      h(
+        'button',
+        { class: `btn act especial${sp ? '' : ' none'}`, style: this.special ? `--lc:${specialColor(this.special)}` : undefined, title: sp ? `${sp.name}: ${sp.beats}; perde para ${MOVE_LABEL[sp.losesTo as BasicAction]} (tecla 4)` : 'Compre um Especial na loja' },
+        h('span', { class: 'ico' }, sp ? sp.icon : '🔒'),
+        sp ? sp.name : 'Especial',
+        h('small', {}, sp ? sp.beats : 'compre na loja'),
+        this.spUses,
+      ) as HTMLButtonElement,
+    );
+    this.spBtn.addEventListener('click', () => this.choose('especial'));
+    this.buttons.push(this.spBtn);
+    this.setSpecialLeft(this.spLeft);
     this.actionsEl.append(...this.buttons);
     if (this.spectate) this.revealEl.classList.add('named');
     // Raio pixel do VS nas cores dos dois elementos
@@ -206,10 +282,23 @@ export class BattleUi {
   }
 
   private onKey = (e: KeyboardEvent) => {
-    const map: Record<string, Action> = { '1': 'ataque', '2': 'defesa', '3': 'carga', a: 'ataque', s: 'defesa', d: 'carga' };
+    const map: Record<string, Action> = { '1': 'ataque', '2': 'defesa', '3': 'carga', '4': 'especial', a: 'ataque', s: 'defesa', d: 'carga', f: 'especial' };
     const a = map[e.key.toLowerCase()];
     if (a) this.choose(a);
   };
+
+  private canSpecial(): boolean {
+    return this.special !== null && this.spLeft > 0;
+  }
+
+  /** Usos restantes: selo no botão e no ícone da build; sem uso o botão fica apagado. */
+  private setSpecialLeft(n: number): void {
+    this.spLeft = n;
+    this.spUses.textContent = this.special ? (n > 0 ? `${n}×` : 'usado') : '';
+    this.spBtn.classList.toggle('spent', !!this.special && n <= 0);
+    if (this.special && n <= 0) this.spBtn.disabled = true;
+    setUses(this.you, n);
+  }
 
   private flush(): void {
     const p = this.pending;
@@ -230,7 +319,7 @@ export class BattleUi {
     this.digitEl = null;
     this.actionsEl.classList.remove('picked', 'hesitou');
     this.buttons.forEach((b) => {
-      b.disabled = false;
+      b.disabled = b === this.spBtn && !this.canSpecial();
       b.classList.remove('chosen', 'press');
     });
     // Cartas de costas: a sua espera a escolha; a do oponente balança enquanto ele pensa
@@ -302,6 +391,7 @@ export class BattleUi {
 
   private choose(a: Action): void {
     if (this.spectate || this.chosen || this.buttons[0].disabled) return;
+    if (a === 'especial' && !this.canSpecial()) return;
     this.chosen = a;
     this.setTense(false);
     this.onAct(a);
@@ -311,7 +401,8 @@ export class BattleUi {
       b.disabled = true;
       if (b === btn) b.classList.add('chosen');
     });
-    this.textEl.textContent = `Você escolheu ${NAME[a]}. Esperando o oponente...`;
+    const label = a === 'especial' && this.special ? MOVE_LABEL[this.special] : MOVE_LABEL[a as BasicAction];
+    this.textEl.textContent = `Você escolheu ${label}. Esperando o oponente...`;
     vibrate(12);
 
     const card = this.cards.you;
@@ -320,7 +411,7 @@ export class BattleUi {
     if (!rm) {
       const from = center(btn);
       play(btn, [{ scale: '1' }, { scale: '1.08', offset: 0.43 }, { scale: '1' }], { duration: 210 }, this.fx);
-      burst(from.x, from.y, 8, [ACT_COLOR[a]], { speed: [60, 113], life: [300, 300], step: true, size: 1 });
+      burst(from.x, from.y, 8, [ACT_COLOR[a === 'especial' ? this.special! : a]], { speed: [60, 113], life: [300, 300], step: true, size: 1 });
       // Carta de costas voa do botão até o slot (FLIP) e assenta com um quique
       const to = center(card.root);
       play(card.root, [{ transform: `translate(${from.x - to.x}px, ${from.y - to.y}px) scale(.6)` }, { transform: 'translate(0, 0) scale(1)' }], { duration: 240, easing: 'cubic-bezier(.2,.9,.3,1.2)' }, this.fx);
@@ -350,10 +441,23 @@ export class BattleUi {
     this.readyEl?.remove();
     this.readyEl = null;
     for (const c of [yc, oc]) c.root.classList.remove('empty', 'wobble');
-    yc.front.className = `face front ${msg.you}`;
-    yc.front.textContent = ICON[msg.you];
-    oc.front.className = `face front ${msg.opp}`;
-    oc.front.textContent = ICON[msg.opp];
+    // A carta mostra a jogada efetiva: o 'especial' revelado como Golpe Brutal, Explosão Arcana ou Armadilha
+    const mv: Record<Side, Move> = { you: msg.moveYou ?? (msg.you === 'especial' ? 'defesa' : msg.you), opp: msg.moveOpp ?? (msg.opp === 'especial' ? 'defesa' : msg.opp) };
+    for (const side of ['you', 'opp'] as const) {
+      const m = mv[side];
+      const c = this.cards[side];
+      c.front.className = `face front ${isSpecial(m) ? `sp ${m}` : m}`;
+      c.front.textContent = ICON[m];
+      if (isSpecial(m)) {
+        c.front.style.setProperty('--lc', ACT_COLOR[m]);
+        // Selo com o nome do Especial sobre a carta (absoluto: não muda a altura do painel)
+        const tag = h('b', { class: `sptag ${side}`, style: `--lc:${ACT_COLOR[m]}` }, SPECIAL_INFO[m].name);
+        c.root.parentElement?.append(tag);
+        stampIn(tag, this.fx, { from: 2, ms: 200, delay: 380 });
+      }
+    }
+    this.setSpecialLeft(msg.spLeftYou ?? this.spLeft);
+    if (msg.spLeftOpp !== undefined) setUses(this.opp, msg.spLeftOpp);
 
     const role = (s: Side): 'win' | 'lose' | 'tie' => (msg.winner === 'tie' ? 'tie' : msg.winner === s ? 'win' : 'lose');
     const T = 600;
@@ -400,11 +504,11 @@ export class BattleUi {
           this.midEl.append(h('i', { class: 'spark' }));
           (msg.winner === 'you' ? yc : oc).root.classList.add('won');
           (msg.winner === 'you' ? oc : yc).root.classList.add('lost');
-        } else if (msg.you === 'carga') {
+        } else if (mv.you === 'carga') {
           yc.root.classList.add('glowc');
           oc.root.classList.add('glowc');
           this.midEl.append(h('b', { class: 'eq' }, '='));
-        } else if (msg.you === 'defesa') {
+        } else if (mv.you === 'defesa') {
           this.midEl.append(h('i', { class: 'midshield' }));
         } else {
           this.midEl.append(h('i', { class: 'spark' }), h('b', { class: 'eq' }, '='));
@@ -421,7 +525,7 @@ export class BattleUi {
     const chAtStart = { ...this.ch };
     this.ch = { you: msg.chYou, opp: msg.chOpp };
     const t0 = performance.now();
-    later(440, () => this.castSpells(msg, baseYou, baseOpp, chAtStart, t0 + 440), this.fx);
+    later(440, () => this.castSpells(msg, mv, baseYou, baseOpp, chAtStart, t0 + 440), this.fx);
 
     // Estado final (HP, carga e texto), aplicado no impacto ou na hora se o turno seguinte chegar antes
     let barsDone = false;
@@ -446,7 +550,7 @@ export class BattleUi {
       FX_IMPACT_MS,
       () => {
         applyBars();
-        this.impact(msg, baseYou, baseOpp, chAtStart, fury);
+        this.impact(msg, mv, baseYou, baseOpp, chAtStart, fury);
       },
       this.fx,
     );
@@ -511,23 +615,32 @@ export class BattleUi {
   }
 
   /** Feitiços de T0+440 a T0+600, na linguagem do mundo (fxcanvas). */
-  private castSpells(msg: Reveal, baseYou: number, baseOpp: number, ch: Record<Side, boolean>, t0: number): void {
+  private castSpells(msg: Reveal, mv: Record<Side, Move>, baseYou: number, baseOpp: number, ch: Record<Side, boolean>, t0: number): void {
     const pts = { you: center(this.you.body), opp: center(this.opp.body) };
     const mid = { x: (pts.you.x + pts.opp.x) / 2, y: (pts.you.y + pts.opp.y) / 2 };
     const form = (s: Side) => this.view(s).info.look.form;
-    if (msg.you === 'ataque' && msg.opp === 'ataque' && baseYou > 0 && baseOpp > 0) {
-      spell(form('you'), pts.you, mid, t0, 160, { size: ch.you ? 2 : 1, charged: ch.you });
-      spell(form('opp'), pts.opp, mid, t0, 160, { size: ch.opp ? 2 : 1, charged: ch.opp });
+    if (hits(mv.you) && hits(mv.opp) && baseYou > 0 && baseOpp > 0) {
+      // Choque: cada golpe vai até o meio (o Especial sai maior e com o efeito da linha)
+      for (const s of ['you', 'opp'] as const) {
+        const m = mv[s];
+        spell(form(s), pts[s], mid, t0, 160, { size: ch[s] || isSpecial(m) ? 2 : 1, charged: ch[s] });
+        if (isSpecial(m)) this.specialCast(m, pts[s], mid, t0);
+      }
       return;
     }
     if (msg.winner === 'tie') return;
     const w: Side = msg.winner;
     const l: Side = w === 'you' ? 'opp' : 'you';
     const base = w === 'you' ? baseOpp : baseYou;
-    if (base <= 0) return;
-    const wAct = w === 'you' ? msg.you : msg.opp;
+    // Com Esquiva o golpe sai mesmo assim e passa raspando
+    const dodged = l === 'you' ? !!msg.dodgeYou : !!msg.dodgeOpp;
+    if (base <= 0 && !dodged) return;
+    const wAct = mv[w];
     const size = ch[w] ? 2 : 1;
-    if (wAct === 'defesa') {
+    if (isSpecial(wAct)) {
+      spell(form(w), pts[w], pts[l], t0, 160, { size: 2, charged: ch[w] });
+      this.specialCast(wAct, pts[w], pts[l], t0);
+    } else if (wAct === 'defesa') {
       // O escudo acende na frente de quem defendeu; o ataque se desfaz nele e o contra-ataque volta menor
       const sh = this.shield(w);
       const sp = center(sh);
@@ -553,15 +666,30 @@ export class BattleUi {
     }
   }
 
-  private shield(s: Side): HTMLElement {
-    const el = h('i', { class: `pshield ${s}` });
+  /** Assinatura de cada Especial: golpe gigante (Brutal), orbe e raio roxo (Arcana), rede e espinhos (Armadilha). */
+  private specialCast(kind: SpecialKind, from: Pt, to: Pt, t0: number): void {
+    const c = ACT_COLOR[kind];
+    if (kind === 'brutal') {
+      later(150, () => burst(to.x, to.y, 16, [c, '#ffd27a', '#ffffff'], { speed: [90, 190], life: [240, 380], size: 2, step: true }), this.fx);
+    } else if (kind === 'arcana') {
+      converge(from.x, from.y, 10, [c, '#e4d4ff'], 44, 120);
+      bolt(from, to, 160, c, t0 + 40);
+      bolt({ x: from.x, y: from.y - 6 }, { x: to.x, y: to.y + 6 }, 160, '#e4d4ff', t0 + 80);
+    } else {
+      converge(to.x, to.y, 12, [c, '#d2f7b8'], 56, 160);
+      later(150, () => burst(to.x, to.y + 26, 8, [c, '#17803a'], { angle: [-120, -60], speed: [80, 150], gravity: 260, life: [220, 320], step: true }), this.fx);
+    }
+  }
+
+  private shield(s: Side, cls = ''): HTMLElement {
+    const el = h('i', { class: `pshield ${s} ${cls}`.trim() });
     this.view(s).root.append(el);
     return el;
   }
 
-  /** Impacto em T0+FX_IMPACT_MS: investida, silhueta, tremida, número e selos. */
-  private impact(msg: Reveal, baseYou: number, baseOpp: number, ch: Record<Side, boolean>, fury: boolean): void {
-    const clash = msg.you === 'ataque' && msg.opp === 'ataque' && baseYou > 0 && baseOpp > 0;
+  /** Impacto em T0+FX_IMPACT_MS: investida, silhueta, tremida, número e selos; esquiva, escudo e cura. */
+  private impact(msg: Reveal, mv: Record<Side, Move>, baseYou: number, baseOpp: number, ch: Record<Side, boolean>, fury: boolean): void {
+    const clash = hits(mv.you) && hits(mv.opp) && baseYou > 0 && baseOpp > 0;
     const rm = reduced();
     if (clash) {
       const a = center(this.you.body);
@@ -571,8 +699,12 @@ export class BattleUi {
       burst(m.x, m.y, 4, ['#ffffff'], { even: true, angle: [0, 360], speed: [50, 50], life: [200, 200], size: 2 });
     }
     // dmgOpp foi causado por você; dmgYou, pelo oponente
-    if (msg.dmgOpp > 0) this.strike(this.you, this.opp, msg.dmgOpp, baseOpp, msg.hpOpp, ch.you, clash);
-    if (msg.dmgYou > 0) this.strike(this.opp, this.you, msg.dmgYou, baseYou, msg.hpYou, ch.opp, clash);
+    if (msg.dmgOpp > 0) this.strike(this.you, this.opp, msg.dmgOpp, baseOpp, msg.hpOpp, ch.you, clash, mv.you, !!msg.shieldOpp);
+    if (msg.dmgYou > 0) this.strike(this.opp, this.you, msg.dmgYou, baseYou, msg.hpYou, ch.opp, clash, mv.opp, !!msg.shieldYou);
+    if (msg.dodgeYou) this.dodge(this.you);
+    if (msg.dodgeOpp) this.dodge(this.opp);
+    if (msg.healYou > 0) later(160, () => this.heal(this.you, msg.healYou), this.fx);
+    if (msg.healOpp > 0) later(160, () => this.heal(this.opp, msg.healOpp), this.fx);
     if (fury) {
       for (const v of [this.you, this.opp]) {
         const r = v.body.getBoundingClientRect();
@@ -580,27 +712,74 @@ export class BattleUi {
       }
     }
     if (!this.spectate && msg.dmgYou > 0) {
-      if (!rm) play(this.root, [{ translate: '0 0' }, { translate: '2px 0' }, { translate: '-2px 0' }, { translate: '2px 0' }, { translate: '0 0' }], { duration: 160, easing: 'steps(4)' }, this.fx);
-      vibrate(msg.dmgYou >= 0.3 * this.you.info.mhp ? [40, 30, 40] : 25);
+      const heavy = msg.dmgYou >= 0.3 * this.you.info.mhp || mv.opp === 'brutal';
+      if (!rm) play(this.root, heavy ? [{ translate: '0 0' }, { translate: '4px 2px' }, { translate: '-4px -1px' }, { translate: '3px 0' }, { translate: '-2px 1px' }, { translate: '0 0' }] : [{ translate: '0 0' }, { translate: '2px 0' }, { translate: '-2px 0' }, { translate: '2px 0' }, { translate: '0 0' }], { duration: heavy ? 220 : 160, easing: 'steps(4)' }, this.fx);
+      vibrate(heavy ? [40, 30, 40] : 25);
     }
   }
 
-  private strike(att: FighterView, tgt: FighterView, dmg: number, base: number, hpAfter: number, charged: boolean, clash: boolean): void {
+  /** Texto voador curto (cura, esquiva) sobre um lutador; some junto com os números de dano. */
+  private floatText(v: FighterView, cls: string, text: string, left = HIT_END_AT): HTMLElement {
+    const el = h('span', { class: `dmgnum ${cls}` }, text);
+    v.root.append(el);
+    if (reduced()) play(el, [{ opacity: 0 }, { opacity: 1, offset: 0.15 }, { opacity: 1, offset: 0.7 }, { opacity: 0 }], { duration: left - 20, fill: 'forwards' }, this.fx);
+    else
+      play(
+        el,
+        [
+          { transform: 'translate(-50%, 4px) scale(.5)', opacity: 1 },
+          { transform: 'translate(-50%, 0) scale(1.2)', opacity: 1, offset: 0.15 },
+          { transform: 'translate(-50%, -2px) scale(1)', opacity: 1, offset: 0.3 },
+          { transform: 'translate(-50%, -18px) scale(1)', opacity: 1, offset: 0.8 },
+          { transform: 'translate(-50%, -22px) scale(1)', opacity: 0 },
+        ],
+        { duration: left - 20, easing: 'steps(12)', fill: 'forwards' },
+        this.fx,
+      );
+    later(left, () => el.remove(), this.fx);
+    return el;
+  }
+
+  /** Esquiva: o bicho desvia para o lado e o golpe não causa dano. */
+  private dodge(v: FighterView): void {
+    this.floatText(v, 'dodge', '💨 ESQUIVOU!');
+    const away = v.side === 'you' ? -1 : 1;
+    if (!reduced()) {
+      play(v.body, [{ translate: '0 0' }, { translate: `${away * 18}px -4px`, offset: 0.35 }, { translate: `${away * 18}px -4px`, offset: 0.6 }, { translate: '0 0' }], { duration: 420, easing: 'steps(6)' }, this.fx);
+      const c = center(v.body);
+      burst(c.x - away * 10, c.y + 28, 6, ['#e9e1cc', '#9d9580'], { angle: [-170, -10], speed: [30, 70], gravity: 120, life: [220, 320], step: true });
+    } else play(v.body, [{ opacity: 0.4 }, { opacity: 1 }], { duration: 300 }, this.fx);
+  }
+
+  /** Cura (Sede de Batalha): número verde e brilho subindo. */
+  private heal(v: FighterView, n: number): void {
+    this.floatText(v, 'heal', `+${n}`, HIT_END_AT - 160);
+    if (!reduced()) {
+      const r = v.body.getBoundingClientRect();
+      burst(r.left + r.width / 2, r.bottom - 6, 8, ['#58e07a', '#d2f7b8'], { angle: [-100, -80], speed: [40, 90], gravity: -40, life: [300, 420], spread: r.width / 3, spreadY: 0, step: true });
+    }
+  }
+
+  private strike(att: FighterView, tgt: FighterView, dmg: number, base: number, hpAfter: number, charged: boolean, clash: boolean, move: Move, shielded: boolean): void {
     const rm = reduced();
     const hit = base > 0;
-    const mult = hit ? typeMult(att.info.look, tgt.info.look) : 1;
+    const tm = hit ? typeMult(att.info.look, tgt.info.look) : 1;
+    // Foco Elemental amplia a vantagem de tipo (o selo mostra o valor de verdade)
+    const mult = tm > 1 ? tm * (modsOf(att.info.skills ?? []).typeStrong / BALANCE.typeStrong) : tm;
     const sup = mult > 1;
     const weak = mult < 1;
     const ko = hpAfter <= 0;
     const dir = att.side === 'you' ? 1 : -1;
+    const special = hit && isSpecial(move) ? move : null;
     if (hit && !rm) {
       // Investida (80 ms) e volta com Back.easeOut (180 ms); no choque os dois avançam juntos
-      play(att.body, [{ translate: '0 0', easing: 'ease-in' }, { translate: `${dir * 14}px 0`, offset: 80 / 260, easing: 'cubic-bezier(.34,1.56,.64,1)' }, { translate: '0 0' }], { duration: 260 }, this.fx);
+      const reach = special === 'brutal' ? 24 : 14;
+      play(att.body, [{ translate: '0 0', easing: 'ease-in' }, { translate: `${dir * reach}px 0`, offset: 80 / 260, easing: 'cubic-bezier(.34,1.56,.64,1)' }, { translate: '0 0' }], { duration: 260 }, this.fx);
     }
     // Silhueta branca e tremida proporcional depois do hitstop
     play(tgt.body, [{ filter: 'brightness(0) invert(1)' }, { filter: 'brightness(0) invert(1)' }], { duration: 60 }, this.fx);
     if (!rm) {
-      const stop = ko ? 150 : charged || sup ? 100 : 70;
+      const stop = ko ? 150 : charged || sup || special ? 100 : 70;
       const A = Math.round(3 + (9 * dmg) / tgt.info.mhp);
       const kf: Keyframe[] = [];
       for (let i = 0; i < 12; i++) kf.push({ transform: `translateX(${(i % 2 ? -1 : 1) * Math.max(1, Math.round(A * (1 - i / 12)))}px)`, easing: 'steps(1)' });
@@ -615,15 +794,29 @@ export class BattleUi {
       if (charged) bolt({ x: c.x - dir * 10, y: c.y - 60 }, c, 140);
     }
     if (clash) burst(c.x - dir * 30, c.y, 5, ['#ffcf3f'], { speed: [40, 80], life: [200, 260], add: true });
+    if (shielded) {
+      // Escudo Arcano: hexágono roxo na frente do alvo que racha no golpe
+      const sh = this.shield(tgt.side, 'arc');
+      later(
+        200,
+        () => {
+          const sp = center(sh);
+          sh.remove();
+          burst(sp.x, sp.y, 6, ['#b98cff', '#e4d4ff'], { speed: [50, 120], life: [220, 320], gravity: 260, size: 2 });
+        },
+        this.fx,
+      );
+    }
 
     // Número voador
     const elemBody = (() => {
       const e = attackElem(att.info.look);
       return e ? ELEM_TONE[e].body : '#ffffff';
     })();
-    const big = hit && (charged || sup);
-    const num = h('span', { class: `dmgnum${big ? ' big' : ''}${hit && weak && !charged ? ' weak' : ''}${hit && charged ? ' ch' : ''}${!hit ? ' fury' : ''}` }, `-${dmg}${hit && charged ? ' ×2' : hit && sup ? '!' : hit && weak ? '…' : ''}`);
+    const big = hit && (charged || sup || !!special);
+    const num = h('span', { class: `dmgnum${big ? ' big' : ''}${hit && weak && !charged ? ' weak' : ''}${hit && charged ? ' ch' : ''}${!hit ? ' fury' : ''}` }, `-${dmg}${hit && charged ? ' ×2' : hit && (sup || special) ? '!' : hit && weak ? '…' : ''}`);
     if (hit && sup && !charged) num.style.color = elemBody;
+    else if (special && !charged) num.style.color = ACT_COLOR[special];
     tgt.root.append(num);
     if (rm) play(num, [{ opacity: 0 }, { opacity: 1, offset: 0.15 }, { opacity: 1, offset: 0.7 }, { opacity: 0 }], { duration: 700, fill: 'forwards' }, this.fx);
     else
@@ -641,11 +834,12 @@ export class BattleUi {
       );
     later(HIT_END_AT, () => num.remove(), this.fx);
 
-    // Selos de eficácia e de carga
+    // Selos: eficácia, carga e escudo (o Especial já aparece no selo da carta e na cor do número)
     const seals: HTMLElement[] = [];
     if (hit && sup) seals.push(h('b', { class: 'seal sup', style: `background:${elemBody}` }, `SUPER EFICAZ! ${fmtMult(mult)}`));
     if (hit && weak) seals.push(h('b', { class: 'seal weak' }, `pouco eficaz… ${fmtMult(mult)}`));
     if (hit && charged) seals.push(h('b', { class: 'seal ch' }, '×2 CARREGADO!'));
+    if (shielded) seals.push(h('b', { class: 'seal arc' }, '🔷 ESCUDO: METADE'));
     if (!seals.length) return;
     const box = h('div', { class: 'seals' }, ...seals);
     tgt.root.append(box);
@@ -664,7 +858,7 @@ export class BattleUi {
 
   /** Remove número e selos que sobraram (turno novo ou resultado chegou antes do fim deles). */
   private clearHits(): void {
-    this.root.querySelectorAll('.seals, .dmgnum').forEach((e) => e.remove());
+    this.root.querySelectorAll('.seals, .dmgnum, .pshield').forEach((e) => e.remove());
   }
 
   end(msg: End, onClosed: () => void): void {

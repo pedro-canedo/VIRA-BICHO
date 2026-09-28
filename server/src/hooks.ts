@@ -9,6 +9,7 @@ export interface RoomHooks {
   matchEnd(room: Room, winner: Player | null): void;
   duel(room: Room, a: Player, b: Player): void;
   battle(room: Room, kind: Battle['kind']): void;
+  /** Morte (o jogador renasce) ou saída da partida no Duelo Final. */
   eliminated(room: Room, p: Player): void;
 }
 

@@ -59,11 +59,11 @@ export const RAMP: Record<Form, readonly number[]> = {
 
 export const FORM_TINT = Object.fromEntries(Object.entries(FORM_COLOR).map(([k, v]) => [k, hexNum(v)])) as Record<Form, number>;
 
-/** Escola de magia do golpe: o elemento de ataque, a Quimera ou o neutro (ovo). */
+/** Escola de magia do golpe: o elemento de ataque, a Quimera ou o neutro (inclusive o bebê neutro). */
 export type School = Elem | 'quimera' | 'neutro';
 
 export function schoolOf(f: Form, s: Stage, o: Elem[]): School {
-  if (s === 0 || f === 'neutro') return 'neutro';
+  if (f === 'neutro') return 'neutro';
   if (f === 'quimera') return 'quimera';
   return attackElem({ form: f, stage: s, order: o }) ?? 'neutro';
 }

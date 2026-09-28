@@ -7,3 +7,5 @@ export * from './mapgen';
 export * from './pathfinding';
 export * from './protocol';
 export * from './obs';
+export * from './modes';
+export * from './skills';

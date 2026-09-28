@@ -1,13 +1,18 @@
+import type { Move } from './battle';
 import type { Fruit } from './mapgen';
+import { isGameMode, type GameMode } from './modes';
+import { isSkillId, type Line, type SkillId, type SpecialKind } from './skills';
 import { ACTIONS, type Action, type Elem, type Form, type Look, type Phase, type Stage, type TypePoints } from './types';
 
 // ---------- Cliente → servidor ----------
 
 export type ClientMsg =
-  | { t: 'hello'; name: string; mode: 'quick' | 'create' | 'join'; code?: string }
+  | { t: 'hello'; name: string; mode: 'quick' | 'create' | 'join'; code?: string; gm?: GameMode }
   | { t: 'move'; x: number; y: number }
   | { t: 'target'; id: number }
   | { t: 'act'; a: Action }
+  /** Compra uma habilidade na loja (fora de batalha). */
+  | { t: 'buy'; s: SkillId }
   | { t: 'startnow' }
   | { t: 'leave' };
 
@@ -25,12 +30,14 @@ export function parseClientMsg(v: unknown): ClientMsg | null {
   const m = v as Record<string, unknown>;
   switch (m.t) {
     case 'hello': {
-      const { name, mode, code } = m;
+      const { name, mode, code, gm } = m;
       if (typeof name !== 'string' || name.length > PROTOCOL_LIMITS.nameMaxRaw) return null;
       if (!MODES.includes(mode as (typeof MODES)[number])) return null;
       if (code !== undefined && (typeof code !== 'string' || code.length > PROTOCOL_LIMITS.codeMaxRaw)) return null;
+      if (gm !== undefined && !isGameMode(gm)) return null;
       const out: ClientMsg = { t: 'hello', name, mode: mode as (typeof MODES)[number] };
       if (code !== undefined) out.code = code;
+      if (gm !== undefined) out.gm = gm;
       return out;
     }
     case 'move':
@@ -39,6 +46,8 @@ export function parseClientMsg(v: unknown): ClientMsg | null {
       return Number.isSafeInteger(m.id) && (m.id as number) > 0 ? { t: 'target', id: m.id as number } : null;
     case 'act':
       return ACTIONS.includes(m.a as Action) ? { t: 'act', a: m.a as Action } : null;
+    case 'buy':
+      return isSkillId(m.s) ? { t: 'buy', s: m.s } : null;
     case 'startnow':
       return { t: 'startnow' };
     case 'leave':
@@ -68,6 +77,11 @@ export interface EntSnap {
   sh?: 1;
   ch?: 1;
   tr?: number;
+  /** Chocando (acabou de nascer ou renascer): desenhar o ovo. */
+  hx?: 1;
+  /** Linha do título da build (e nível do título: 1 aprendiz, 2 mestre). */
+  ln?: Line;
+  tl?: 1 | 2;
 }
 
 export interface BattleSnap {
@@ -93,6 +107,12 @@ export interface SelfSnap {
   crown: boolean;
   battle: number | null;
   target: number | null;
+  essence: number;
+  skills: SkillId[];
+  power: number;
+  deaths: number;
+  /** Tempo restante chocando (0 = livre). */
+  hatchMs: number;
 }
 
 export interface LeaderRow {
@@ -101,6 +121,23 @@ export interface LeaderRow {
   s: Stage;
   f: Form;
   cr?: 1;
+  /** Força (ordena o placar e escolhe os finalistas do duelo). */
+  pw: number;
+  ln?: Line;
+  tl?: 1 | 2;
+}
+
+export interface RankRow {
+  place: number;
+  name: string;
+  look: Look;
+  power: number;
+  title: string | null;
+  skills: SkillId[];
+  deaths: number;
+  /** 1 = venceu o Duelo Final, 2 = perdeu o duelo. */
+  duel?: 1 | 2;
+  you?: true;
 }
 
 export interface Snap {
@@ -134,6 +171,10 @@ export interface FighterInfo {
   charged: boolean;
   trophies: number;
   wild: boolean;
+  /** Build (para mostrar o título e as passivas do oponente). */
+  skills: SkillId[];
+  special: SpecialKind | null;
+  specialLeft: number;
 }
 
 export interface HistoryItem {
@@ -151,8 +192,9 @@ export type ServerMsg =
       startsIn: number | null;
       min: number;
       max: number;
+      gm: GameMode;
     }
-  | { t: 'start'; you: number; w: number; h: number; tiles: string; fruits: Fruit[]; players: number }
+  | { t: 'start'; you: number; w: number; h: number; tiles: string; fruits: Fruit[]; players: number; gm: GameMode }
   | Snap
   | {
       t: 'b_start';
@@ -180,18 +222,35 @@ export type ServerMsg =
       chOpp: boolean;
       winner: 'you' | 'opp' | 'tie';
       text: string;
+      /** Jogada efetiva (o 'especial' revelado como Golpe Brutal, Explosão Arcana ou Armadilha). */
+      moveYou: Move;
+      moveOpp: Move;
+      healYou: number;
+      healOpp: number;
+      dodgeYou: boolean;
+      dodgeOpp: boolean;
+      shieldYou: boolean;
+      shieldOpp: boolean;
+      /** Usos do Especial que ainda restam nesta batalha. */
+      spLeftYou: number;
+      spLeftOpp: number;
     }
   | { t: 'b_end'; id: number; result: 'win' | 'lose' | 'draw' | 'flee' | 'over'; text: string }
   | { t: 'feed'; text: string; kind: 'steal' | 'elim' | 'evo' | 'info' | 'phase' }
   | { t: 'toast'; text: string }
+  /** Ficou de fora do Duelo Final (só nesse momento alguém sai de vez; a colocação vem no fim). */
   | { t: 'elim'; by: string | null; place: number; reason: 'batalha' | 'zona' | 'duelo' }
+  /** Morreu: renasce do ovo em respawnMs, perdendo parte da Essência e dos pontos de tipo. */
+  | { t: 'death'; by: string | null; reason: 'batalha' | 'zona'; respawnMs: number; lost: { essence: number; points: number } }
   | {
       t: 'end';
       winner: { name: string; look: Look } | null;
       place: number;
       total: number;
-      you: { name: string; look: Look; wins: number; steals: number; wilds: number };
+      you: { name: string; look: Look; wins: number; steals: number; wilds: number; deaths: number; power: number; skills: SkillId[]; title: string | null };
       history: HistoryItem[];
+      /** Ranking completo: 1º e 2º do Duelo Final, depois pela Força. */
+      ranking: RankRow[];
     }
   | { t: 'error'; msg: string };
 
@@ -216,7 +275,7 @@ export type FxEvent =
   /** Batalha começou. a = quem iniciou (sempre jogador), b = alvo. kd: p = PvP, w = selvagem, f = Duelo Final. */
   | { k: 'bt'; x: number; y: number; id: number; a: number; b: number; kd: 'p' | 'w' | 'f' }
   /** Golpe com dano > 0. bt = id da batalha. act = ação do atacante. m = eficácia: 1 (>1), -1 (<1), 0. fl = bits FX_*. hp = HP do alvo depois do turno. */
-  | { k: 'h'; x: number; y: number; bt: number; a: number; d: number; v: number; act: Action; m: -1 | 0 | 1; fl: number; hp: number }
+  | { k: 'h'; x: number; y: number; bt: number; a: number; d: number; v: number; act: Action; m: -1 | 0 | 1; fl: number; hp: number; sp?: SpecialKind }
   /** Fúria da arena no Duelo Final: dano va em a e vb em b, sem atacante. */
   | { k: 'fu'; x: number; y: number; bt: number; a: number; b: number; va: number; vb: number }
   /** O jogador p comeu o selvagem w, do elemento e. x2 = XP em dobro pela Fome. x/y = tile do selvagem. */
@@ -230,7 +289,11 @@ export type FxEvent =
   /** Eliminação (a entidade já some do snapshot deste tick). by = id de quem eliminou (0 = ninguém). r: b = batalha, z = zona, d = cortado no Duelo Final. */
   | { k: 'x'; x: number; y: number; id: number; f: Form; s: Stage; o: Elem[]; by: number; r: 'b' | 'z' | 'd' }
   /** Selvagem surgiu (não é emitido no povoamento inicial). */
-  | { k: 'w'; x: number; y: number; id: number; e: Elem };
+  | { k: 'w'; x: number; y: number; id: number; e: Elem }
+  /** Um jogador (re)nasceu: o ovo começa a chocar neste tile. */
+  | { k: 'r'; x: number; y: number; id: number }
+  /** Compra na loja (brilho da linha da habilidade). */
+  | { k: 'k'; x: number; y: number; id: number; s: SkillId };
 
 export type FxKind = FxEvent['k'];
 

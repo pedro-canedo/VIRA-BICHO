@@ -1,4 +1,4 @@
-import { FORMS, FORM_LABEL, STAGE_LABEL, speciesName, type Form, type Look, type Stage } from '@vb/shared';
+import { FORMS, FORM_LABEL, levelOf, STAGE_LABEL, speciesName, type Form, type Look, type Stage } from '@vb/shared';
 import { creatureImg } from '../render/creature';
 import { h, modal } from './dom';
 
@@ -17,7 +17,7 @@ const seen = load();
 /** Registra uma forma vista. Retorna true se for nova. */
 export function recordLook(look: Look): boolean {
   const key = `${look.form}:${look.stage}`;
-  if (look.stage === 0 || seen.has(key)) return false;
+  if (seen.has(key)) return false;
   seen.add(key);
   try {
     localStorage.setItem(KEY, JSON.stringify([...seen]));
@@ -38,23 +38,27 @@ const sampleOrder: Record<Form, Look['order']> = {
   quimera: ['brasa', 'mare', 'broto'],
 };
 
+const STAGES: Stage[] = [0, 1, 2, 3];
+
 export function showBestiary(): void {
-  const total = FORMS.length * 3;
-  const found = [...seen].length;
+  // 8 formas × 4 níveis (o bebê que sai do ovo é o Nível 1)
+  const total = FORMS.length * STAGES.length;
+  let found = 0;
+  for (const s of STAGES) for (const f of FORMS) if (seen.has(`${f}:${s}`)) found++;
   const grid = h(
     'div',
-    { class: 'bestiary', style: 'grid-template-columns:auto repeat(3, 1fr)' },
+    { class: 'bestiary' },
     h('div'),
-    ...[1, 2, 3].map((s) => h('div', { class: 'small muted', style: 'text-align:center' }, STAGE_LABEL[s])),
+    ...STAGES.map((s) => h('div', { class: 'bhead' }, h('b', {}, `Nv ${levelOf(s)}`), h('span', {}, STAGE_LABEL[s]))),
   );
   for (const form of FORMS) {
     grid.append(h('div', { class: 'fl' }, FORM_LABEL[form]));
-    for (const s of [1, 2, 3] as Stage[]) {
+    for (const s of STAGES) {
       const has = seen.has(`${form}:${s}`);
       const look: Look = { form, stage: s, order: sampleOrder[form] };
-      const cell = h('div', { style: 'text-align:center', title: has ? speciesName(form, s) : '???' }, creatureImg(look, 3, { silhouette: !has }), h('div', { class: 'small' }, has ? speciesName(form, s) : '???'));
+      const cell = h('div', { class: `bcell${has ? '' : ' unk'}`, title: has ? `${speciesName(form, s)} · Nível ${levelOf(s)}` : '???' }, creatureImg(look, 3, { silhouette: !has }), h('div', { class: 'small' }, has ? speciesName(form, s) : '???'));
       grid.append(cell);
     }
   }
-  modal(`Bestiário ${found}/${total}`, h('div', {}, h('p', { class: 'muted small' }, 'Cada forma que você alcança fica registrada aqui. Misture tipos para descobrir os híbridos e a rara Quimera.'), grid));
+  modal(`Bestiário ${found}/${total}`, h('div', {}, h('p', { class: 'muted small' }, 'Cada forma que você alcança fica registrada aqui, do bebê que sai do ovo até a forma final. Misture tipos para descobrir os híbridos e a rara Quimera.'), grid));
 }

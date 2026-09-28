@@ -18,6 +18,7 @@ beforeEach(() => {
   room.tick((now += 100));
   me = member.player!;
   for (const p of room.players.values()) {
+    p.hatchUntil = 0; // já saíram do ovo
     if (p === me) continue;
     p.bot = null;
     p.target = null;
@@ -126,6 +127,7 @@ describe('mira humana só dentro do raio de visão', () => {
     strict.startNow(now);
     strict.tick(now + 100);
     const p = m.player!;
+    p.hatchUntil = 0;
     const w = [...strict.wilds.values()][0];
     w.x = p.x + 18 < strict.map.w ? p.x + 18 : p.x - 18;
     w.y = p.y;

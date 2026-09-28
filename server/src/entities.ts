@@ -1,4 +1,4 @@
-import type { Action, Elem, HistoryItem, ServerMsg, Stage, TypePoints, Vec } from '@vb/shared';
+import type { Action, Elem, HistoryItem, Line, ServerMsg, SkillId, SkillMods, Stage, TypePoints, Vec } from '@vb/shared';
 
 export interface Conn {
   send(msg: ServerMsg): void;
@@ -11,6 +11,10 @@ export interface BotBrain {
   nextThinkAt: number;
   /** Agressividade (0..1): chance de caçar jogadores quando possível. */
   aggro: number;
+  /** Linha de habilidades preferida (compra primeiro as dela). */
+  line: Line;
+  /** Segunda linha (as vagas que sobram depois da linha preferida). */
+  second: Line;
 }
 
 interface EntityBase {
@@ -47,7 +51,20 @@ export interface Player extends EntityBase {
   killerId: number | null;
   place: number;
   history: HistoryItem[];
-  stats: { wins: number; steals: number; wilds: number };
+  /** buys = compras; earned = Essência ganha na partida (métricas e simulação). */
+  stats: { wins: number; steals: number; wilds: number; deaths: number; buys: number; earned: number };
+  /** Fração de Essência acumulada pelo multiplicador do modo (vira inteiro ao completar 1). */
+  essenceFrac: number;
+  /** Moeda da loja. */
+  essence: number;
+  /** Habilidades compradas, na ordem da compra. */
+  skills: SkillId[];
+  /** modsOf(skills), recalculado a cada compra. */
+  mods: SkillMods;
+  /** Chocando até este instante (nasceu ou renasceu): não anda, não mira e não pode ser alvo. */
+  hatchUntil: number;
+  /** Força no início do Duelo Final (ordena o ranking de quem ficou de fora). */
+  duelPower: number | null;
 }
 
 export interface Wild extends EntityBase {
@@ -73,6 +90,10 @@ export interface Battle {
   /** Quando um bot/selvagem vai escolher. */
   autoAt: { a: number | null; b: number | null };
   charged: { a: boolean; b: boolean };
+  /** Estado da build de cada lado nesta batalha: usos do Especial e passivas de uma vez. */
+  specialLeft: { a: number; b: number };
+  shieldUsed: { a: boolean; b: boolean };
+  dodgeUsed: { a: boolean; b: boolean };
   cx: number;
   cy: number;
 }

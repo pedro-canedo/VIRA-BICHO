@@ -5,12 +5,15 @@ export type Hybrid = 'vapor' | 'cinza' | 'mangue';
 export type Form = Elem | Hybrid | 'quimera' | 'neutro';
 export const FORMS: readonly Form[] = ['neutro', 'brasa', 'mare', 'broto', 'vapor', 'cinza', 'mangue', 'quimera'];
 
-/** 0 ovo, 1 filhote, 2 adulto, 3 forma final */
+/** Níveis 1 a 4: 0 bebê (acabou de sair do ovo), 1 filhote, 2 adulto, 3 forma final */
 export type Stage = 0 | 1 | 2 | 3;
 export const MAX_STAGE: Stage = 3;
 
-export type Action = 'ataque' | 'defesa' | 'carga';
-export const ACTIONS: readonly Action[] = ['ataque', 'defesa', 'carga'];
+export type BasicAction = 'ataque' | 'defesa' | 'carga';
+export const BASIC_ACTIONS: readonly BasicAction[] = ['ataque', 'defesa', 'carga'];
+/** 'especial' usa o Especial da build (Golpe Brutal, Explosão Arcana ou Armadilha). */
+export type Action = BasicAction | 'especial';
+export const ACTIONS: readonly Action[] = ['ataque', 'defesa', 'carga', 'especial'];
 
 export type Phase = 'coleta' | 'cacada' | 'final' | 'duelo' | 'fim';
 
