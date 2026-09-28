@@ -1,47 +1,84 @@
 # BATLLE-BICHO
 
-Battle royale de monstrinhos para o navegador. Você nasce como um ovo, **vira o que você come** e, se perder uma batalha, **o vencedor rouba a sua evolução**.
+Battle royale de monstrinhos para o navegador. Todo mundo começa **chocando de um ovo**. Você nasce um bebê de nível 1, **vira o que você come**, compra habilidades para montar a sua build (Guerreiro, Mago ou Caçador) e, se perder uma batalha, **o vencedor rouba a sua evolução**. No fim, só as 2 maiores Forças disputam o Duelo Final, e sai o ranking completo da partida.
 
-Partidas de ~5 minutos, 8 a 16 jogadores (bots completam a arena), controle só com mouse ou toque.
+Partidas de 5, 10 ou 30 minutos, com 8 a 16 jogadores (bots completam a arena). O controle é só com mouse ou toque.
 
 **Jogar:** https://batllebicho.caixazen.online
 
 ## Como funciona
 
-**Partida**
+**Modos** (escolhidos no menu; a sala privada usa o modo de quem a cria):
 
-| Tempo | Fase | O que acontece |
-|---|---|---|
-| 0:00–2:00 | Coleta | Só bichos selvagens. Coma para evoluir. |
-| 2:00–4:00 | Caçada | Dá para desafiar outros jogadores. A zona começa a fechar. |
-| 4:00–5:00 | Final | Os selvagens somem e cada derrota custa 2 estágios. |
-| 5:00 | Duelo Final | Só os 2 mais evoluídos seguem, com HP cheio, no centro da arena. Os demais assistem. Sem limite de turnos; a partir do 5º, a "fúria da arena" tira 10% de HP dos dois por turno. Quem vencer leva a partida. |
+| Modo | Duração | Arena | Vagas de habilidade | Maestrias | Troféus |
+|---|---|---|---|---|---|
+| ⚡ Rápido | 5 min | 48/64 tiles | 4 | não | até 3 |
+| ⚔️ Clássico | 10 min | ×1,25 | 6 | sim | até 5 |
+| 🧠 Avançado | 30 min | ×1,5 | 8 | sim | até 8 |
 
-**Evolução:** Ovo → Filhote → Adulto → Forma final. O tipo depende do que você comeu:
-- **Tipos puros:** 🔥 Brasa, 🌊 Maré, 🌿 Broto.
-- **Híbridos:** Vapor, Cinza e Mangue.
-- **Quimera:** rara, quando os três tipos estão equilibrados.
+No Avançado a Essência rende 45%, então a build se completa perto do fim, e não nos primeiros minutos.
 
-O corpo é sempre a mesma bolinha 16×16, que ganha peças (chamas, nadadeiras, folhas) desenhadas proceduralmente. São 24 formas no bestiário.
+**Fases** (os tempos abaixo são do Rápido; os outros modos esticam as mesmas fases):
+
+| Rápido | Clássico | Avançado | Fase | O que acontece |
+|---|---|---|---|---|
+| 0:00–2:00 | 0:00–3:30 | 0:00–9:00 | Coleta | Só bichos selvagens. Coma para evoluir e juntar Essência. |
+| 2:00–4:00 | 3:30–8:00 | 9:00–23:00 | Caçada | Dá para desafiar outros jogadores, e a zona começa a fechar. |
+| 4:00–5:00 | 8:00–10:00 | 23:00–30:00 | Final | Os selvagens somem, e cada derrota custa 2 estágios. |
+| 5:00 | 10:00 | 30:00 | Duelo Final | Só as **2 maiores Forças** seguem, com HP cheio, no centro da arena. Os demais assistem. Não há limite de turnos: a partir do 5º, a "fúria da arena" tira 10% de HP dos dois a cada turno. Quem vencer leva a partida. |
+
+**Nascimento e evolução:**
+- A partida começa com todo mundo dentro do ovo (2,5 s chocando). Do ovo sai um bebê de nível 1 (Bolinha, Faísca, Pingo, Semente…), que evolui para Filhote, Adulto e Forma final.
+- O tipo depende do que você come:
+  - **Tipos puros:** 🔥 Brasa, 🌊 Maré e 🌿 Broto.
+  - **Híbridos:** Vapor, Cinza e Mangue.
+  - **Quimera:** rara, surge quando os três tipos estão equilibrados.
+- O corpo é sempre uma bolinha 16×16 que ganha peças (chamas, nadadeiras, folhas) desenhadas proceduralmente. O bestiário tem 32 formas.
 
 **Batalha:**
-- Os dois escolhem ao mesmo tempo, em segredo: ⚔️ Ataque vence ⚡ Carga, 🛡️ Defesa vence ⚔️ Ataque, ⚡ Carga vence 🛡️ Defesa (e dobra o próximo golpe).
+- Os dois escolhem ao mesmo tempo, em segredo:
+  - ⚔️ Ataque vence ⚡ Carga;
+  - 🛡️ Defesa vence ⚔️ Ataque;
+  - ⚡ Carga vence 🛡️ Defesa e dobra o próximo golpe.
+- O 4º botão, **Especial**, só funciona para quem comprou um (veja abaixo).
 - O triângulo de tipos multiplica o dano: Brasa > Broto > Maré > Brasa.
 - São no máximo 4 turnos, dentro de uma bolha visível no mapa. Quem está do lado de fora pode esperar para atacar o vencedor enfraquecido.
 
-**O twist:**
-- Quem perde entrega um estágio ao vencedor, e o vencedor também absorve metade dos pontos de tipo do perdedor.
-- Só é eliminado quem perde ainda sendo ovo.
+**Morte e renascimento:**
+- Quem perde entrega um estágio ao vencedor, que também absorve metade dos pontos de tipo do perdedor.
+- Um bebê que perde para outro jogador (ou que zera o HP na zona) **morre e renasce de um ovo**, quantas vezes precisar. A cada morte, perde metade da Essência e dos pontos de tipo e volta ao nível 1. As habilidades compradas e os troféus ficam.
+- Depois de renascer vem a **Fome**: 5 s de proteção e XP em dobro por 30 s.
+- Ninguém sai da partida antes do Duelo Final: todos disputam a Força até o fim.
 
-O Duelo Final também começa antes das 5:00 se sobrarem só 2 jogadores depois da Coleta.
+**Essência e loja:**
+- Comer bichos, pegar frutas raras, vencer jogadores e derrubar a Coroa dão **Essência**.
+- A loja (botão **Loja** ou tecla `L`) funciona a qualquer hora fora de batalha, e a partida continua enquanto você compra.
+- São 3 linhas com 5 habilidades cada: 3 passivas, 1 Especial e 1 maestria (nível 3, só no Clássico e no Avançado). Os custos são 9, 18 e 30 de Essência.
+- A classe surge do que você compra. Com 2 e com 4 habilidades da mesma linha você ganha um título e um bônus:
+
+| Linha | Habilidades | 2 da linha | 4 da linha |
+|---|---|---|---|
+| 🗡️ Guerreiro | Couro Grosso (+20% HP), Golpe Pesado (Ataque +40%), Contra-ataque, **Golpe Brutal**, *Sede de Batalha* (cura ao vencer turno) | Aprendiz de Guerreiro: +10% de dano | Campeão: +10% de HP e +10% de dano |
+| 🔮 Mago | Foco Elemental (vantagem de tipo ×1,75), Canalizar (Carga causa dano cheio), Escudo Arcano, **Explosão Arcana**, *Tempestade* (2 Especiais por batalha) | Aprendiz de Mago: Carregado ×2,25 | Arquimago: começa toda batalha Carregado |
+| 🏹 Caçador | Passos Leves (+15% de velocidade), Faro (+1 de Essência por bicho), Esquiva, **Armadilha**, *Rastro* (+1 de XP por bicho) | Rastreador: +10% de velocidade | Predador: vencer um jogador rouba 2 de Essência |
+
+**Especiais:** cada bicho carrega no máximo 1, com 1 uso por batalha (2 com Tempestade), e comprar outro troca o anterior sem ocupar vaga. Eles entram no triângulo:
+- 💥 **Golpe Brutal** vence Ataque e Carga (×1,6) e perde para Defesa.
+- 🔮 **Explosão Arcana** vence Defesa e Carga (×1,4) e perde para Ataque.
+- 🪤 **Armadilha** vence Ataque e Defesa (×1,4) e perde para Carga.
+- Dois Especiais se chocam e os dois levam dano.
+
+**Força e ranking:**
+- A **Força** soma estágio, troféus, habilidades (pelo custo), Essência guardada e vida.
+- Ela ordena o placar, define a Coroa e escolhe os 2 finalistas do Duelo.
+- Na tela final sai o **ranking completo**: todos os jogadores, com colocação, forma, Força, build, título e mortes. Os dois finalistas aparecem marcados.
 
 **Mecânicas extras:**
-- **Coroa:** o líder fica marcado no mapa e vale XP extra para quem o derrubar.
-- **Fome:** quem perde ganha 5 s de proteção e XP em dobro.
-- **Troféus:** vitórias na forma final dão +10% de dano cada.
-- **Fruta rara:** aparece no coração de cada bioma.
+- **Coroa:** a maior Força (a partir do nível 2) fica marcada no mapa e vale XP e Essência extras para quem a derrubar.
+- **Troféus:** vitórias na forma final dão +10% de dano cada, até o teto do modo.
+- **Fruta rara:** aparece no coração de cada bioma e dá pontos de tipo e Essência.
 
-**Efeitos visuais ("Grimório de Pixels"):** cada elemento tem física própria (Brasa sobe, Maré cai e espirala, Broto flutua). Há feitiços no golpe, impacto com hitstop, círculo de runas na evolução, orbe da evolução roubada, eliminação em pixels, zona como barreira mágica, luz do Duelo Final, auras e ambiente vivo nos biomas. No painel de batalha, as cartas viram na revelação e há HP fantasma e selos de eficácia. Tudo em pixel art, sem blur, com orçamento de partículas e qualidade automática pelo FPS (ou escolhida no menu). Respeita `prefers-reduced-motion`. Para ver todos os efeitos em sequência, abra `/?fxdemo`.
+**Efeitos visuais ("Grimório de Pixels"):** cada elemento tem física própria (Brasa sobe, Maré cai e espirala, Broto flutua). Há feitiços no golpe, impacto com hitstop, círculo de runas na evolução, orbe da evolução roubada, eliminação em pixels, zona como barreira mágica, luz do Duelo Final, auras e ambiente vivo nos biomas. No painel de batalha, as cartas viram na revelação e há HP fantasma e selos de eficácia. Tudo em pixel art, sem blur, com orçamento de partículas e qualidade automática pelo FPS (ou escolhida no menu). Respeita `prefers-reduced-motion`. Para ver todos os efeitos em sequência, abra `/?fxdemo` (ou `/?fxdemo=eclosao`, `renascer`, `especiais`, `compra`, `bebes` para uma cena só). As telas da interface abrem sem servidor com `/?uidemo=<tela>` (`menu`, `lobby`, `hud`, `shop`, `battle`, `spectate`, `death`, `end`, `bestiary` e `help`; parâmetros `gm`, `ess` e `sk`).
 
 ## Arquitetura
 
@@ -56,7 +93,7 @@ observer/ vira-bicho-obs: serviço separado de observabilidade (coleta, séries,
 scripts/  build do servidor e do observador, simulação de balanceamento, setup e deploy no celular
 ```
 
-Todos os números do jogo ficam em [`shared/src/balance.ts`](shared/src/balance.ts).
+Todos os números do jogo ficam em [`shared/src/balance.ts`](shared/src/balance.ts). Os modos estão em [`shared/src/modes.ts`](shared/src/modes.ts), e as habilidades, os títulos e a Força em [`shared/src/skills.ts`](shared/src/skills.ts). O desenho completo das builds está em [`docs/builds.md`](docs/builds.md).
 
 ## Desenvolvimento
 
