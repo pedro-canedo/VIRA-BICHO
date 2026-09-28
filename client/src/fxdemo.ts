@@ -1,22 +1,30 @@
 import {
   BALANCE,
+  FORMS,
+  FORM_LABEL,
   FX_CHARGED,
   FX_CLASH,
   FX_KO,
+  STAGE_LABEL,
   encodeTiles,
   generateMap,
   isWalkable,
   maxHp,
+  speciesName,
   type Action,
   type Elem,
   type EntSnap,
   type Form,
   type FxEvent,
+  type Line,
   type Phase,
   type ServerMsg,
+  type SkillId,
   type Snap,
+  type SpecialKind,
   type Stage,
 } from '@vb/shared';
+import { creatureImg, eggImg } from './render/creature';
 import type { GameScene } from './scenes/GameScene';
 
 /**
@@ -39,6 +47,18 @@ interface Scene {
 type Tile = [number, number];
 
 const ME = 1;
+const HATCH = BALANCE.respawn.hatchMs;
+/** Elementos de exemplo de cada forma (tabela de bebês). */
+const ORDER_OF: Record<Form, Elem[]> = {
+  neutro: [],
+  brasa: ['brasa'],
+  mare: ['mare'],
+  broto: ['broto'],
+  vapor: ['brasa', 'mare'],
+  cinza: ['brasa', 'broto'],
+  mangue: ['mare', 'broto'],
+  quimera: ['brasa', 'mare', 'broto'],
+};
 
 export function runFxDemo({ onMsg, scene, name }: Ctx): void {
   const map = generateMap(20260927, 8);
@@ -76,6 +96,14 @@ export function runFxDemo({ onMsg, scene, name }: Ctx): void {
   let crown: { x: number; y: number } | null = null;
   let dest: Tile | null = null;
   const frOff = new Set<number>();
+  // Chocando: id → instante da cena em que o hx cai.
+  const hatching = new Map<number, number>();
+  let mySkills: SkillId[] = [];
+  let deaths = 0;
+  let sceneT = 0;
+  let overlay: HTMLElement | null = null;
+  /** Tiles já ocupados pela cena atual (para espalhar os ovos sem sobrepor). */
+  const taken = new Set<number>();
   // Andadores: cada um anda 1 tile a cada `every` ms pelo caminho (em loop).
   let walkers: { e: EntSnap; path: Tile[]; i: number; acc: number; every: number }[] = [];
   const walk = (e: EntSnap, path: Tile[], every: number = BALANCE.stepMs) => walkers.push({ e, path, i: 0, acc: 0, every });
@@ -126,6 +154,7 @@ export function runFxDemo({ onMsg, scene, name }: Ctx): void {
   };
 
   let panel = 0;
+  const pendingSteps: Step[] = [];
   const reset = () => {
     // Fecha o painel de uma batalha que a troca de cena interrompeu.
     if (panel) onMsg({ t: 'b_end', id: panel, result: 'over', text: '' });
@@ -145,7 +174,71 @@ export function runFxDemo({ onMsg, scene, name }: Ctx): void {
     dest = null;
     frOff.clear();
     walkers = [];
+    hatching.clear();
+    taken.clear();
+    mySkills = [];
+    deaths = 0;
+    overlay?.remove();
+    overlay = null;
     player(ME, 'Você', mx, my, 'brasa', 2, ['brasa']);
+  };
+  /** Tile caminhável e livre mais perto de (x, y). */
+  const near = (x: number, y: number): Tile => {
+    for (let r = 0; r < 8; r++) {
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          const tx = x + dx;
+          const ty = y + dy;
+          const k = ty * map.w + tx;
+          if (isWalkable(map, tx, ty) && !taken.has(k) && !(tx === mx && ty === my)) {
+            taken.add(k);
+            return [tx, ty];
+          }
+        }
+      }
+    }
+    return [x, y];
+  };
+  /** Começa a chocar: o ovo surge no brilho ('r') e o hx cai depois de hatchMs. */
+  const hatchEv = (e: EntSnap) => {
+    e.hx = 1;
+    e.hp = e.mhp;
+    hatching.set(e.id, sceneT + HATCH);
+    queue.push({ k: 'r', x: e.x, y: e.y, id: e.id });
+  };
+  /** Morte ('x') e, se renascer, volta como bebê chocando em (x, y) depois de delay ms (0 = no mesmo snapshot). */
+  const dieEv = (e: EntSnap, by: number, r: 'b' | 'z', at: Tile | null, delay = 0) => {
+    queue.push({ k: 'x', x: e.x, y: e.y, id: e.id, f: e.f, s: e.s, o: e.o, by, r });
+    ents.delete(e.id);
+    if (e.id === ME) {
+      deaths++;
+      onMsg({ t: 'death', by: by ? (ents.get(by)?.n ?? null) : null, reason: r === 'z' ? 'zona' : 'batalha', respawnMs: delay, lost: { essence: 2, points: 3 } });
+    }
+    if (!at) return;
+    const reborn = () => {
+      e.x = at[0];
+      e.y = at[1];
+      delete e.b;
+      setLook(e, e.f, 0, e.o);
+      ents.set(e.id, e);
+      hatchEv(e);
+    };
+    if (delay <= 0) reborn();
+    else pendingSteps.push([sceneT + delay, reborn]);
+  };
+  const buyEv = (e: EntSnap, id: SkillId, ln?: Line, tl?: 1 | 2) => {
+    queue.push({ k: 'k', x: e.x, y: e.y, id: e.id, s: id });
+    if (e.id === ME) mySkills = [...mySkills, id];
+    if (ln && tl) {
+      e.ln = ln;
+      e.tl = tl;
+    }
+  };
+  const special = (a: EntSnap, d: EntSnap, v: number, sp: SpecialKind) => {
+    const bt = a.b ?? d.b ?? 0;
+    const b = battles.get(bt);
+    d.hp = Math.max(0, d.hp - v);
+    queue.push({ k: 'h', x: b?.x ?? d.x, y: b?.y ?? d.y, bt, a: a.id, d: d.id, v, act: 'especial', m: 0, fl: d.hp <= 0 ? FX_KO : 0, hp: d.hp, sp });
   };
   const moveMe = (x: number, y: number) => {
     const me = ents.get(ME)!;
@@ -172,6 +265,188 @@ export function runFxDemo({ onMsg, scene, name }: Ctx): void {
   // ---------------------------------------------------------------- cenas
 
   const SCENES: Record<string, Scene> = {
+    // Tabela (sobreposta ao mundo): ovo, bebê, filhote, adulto e forma final de cada forma.
+    tabela: {
+      ms: 6000,
+      steps: () => {
+        const small = window.innerWidth < 600;
+        const sc = small ? 2 : 3;
+        const el = document.createElement('div');
+        el.style.cssText =
+          'position:fixed;inset:0;z-index:60;overflow:auto;background:rgba(11,7,22,0.94);color:#fffaf0;font:700 11px Nunito,sans-serif;display:flex;align-items:flex-start;justify-content:center;padding:12px 4px;box-sizing:border-box';
+        // No celular uma coluna de formas; no computador duas, lado a lado.
+        const blocks = small ? 1 : 2;
+        const grid = document.createElement('div');
+        const cols = `${small ? 52 : 64}px repeat(5,${32 * sc}px)`;
+        grid.style.cssText = `display:grid;grid-template-columns:${blocks === 2 ? `${cols} 24px ${cols}` : cols};gap:${small ? 2 : 4}px ${small ? 4 : 8}px;align-items:center;justify-items:center`;
+        const cell = (txt: string) => {
+          const d = document.createElement('div');
+          d.textContent = txt;
+          d.style.cssText = 'text-align:center;line-height:1.1';
+          return d;
+        };
+        const head = () => [cell(''), cell('Ovo'), ...STAGE_LABEL.map((l, i) => cell(`${l} (N${i + 1})`))];
+        const row = (f: Form) => {
+          const order = ORDER_OF[f];
+          const out: HTMLElement[] = [cell(`${FORM_LABEL[f]}\n${speciesName(f, 0)}`), eggImg({ form: f, stage: 0, order }, sc, { variant: FORMS.indexOf(f) })];
+          out[0].style.whiteSpace = 'pre-line';
+          for (let st = 0; st < 4; st++) out.push(creatureImg({ form: f, stage: st as Stage, order }, sc));
+          return out;
+        };
+        grid.append(...head(), ...(blocks === 2 ? [cell(''), ...head()] : []));
+        const per = FORMS.length / blocks;
+        for (let i = 0; i < per; i++) {
+          grid.append(...row(FORMS[i]));
+          if (blocks === 2) grid.append(cell(''), ...row(FORMS[i + per]));
+        }
+        el.append(grid);
+        document.body.append(el);
+        overlay = el;
+        return [];
+      },
+    },
+    // Os bebês de todas as formas em volta de você (também bebê).
+    bebes: {
+      ms: 7000,
+      steps: () => {
+        const me = ents.get(ME)!;
+        setLook(me, 'brasa', 0, ['brasa']);
+        me.n = 'Você';
+        const list = FORMS.map((f, i) => {
+          const a = (i / FORMS.length) * Math.PI * 2;
+          const [x, y] = near(mx + Math.round(Math.cos(a) * 3), my + Math.round(Math.sin(a) * 2.4));
+          return player(nextId++, speciesName(f, 0), x, y, f, 0, ORDER_OF[f]);
+        });
+        return [
+          [2500, () => walk(list[1], loop(list[1].x, list[1].y, 1, 1))],
+          [2600, () => walk(list[5], loop(list[5].x, list[5].y, 1, 1))],
+          // Um bebê evolui para filhote no meio da roda.
+          [4200, () => {
+            setLook(list[3], 'broto', 1, ['broto']);
+            list[3].n = speciesName('broto', 1);
+            queue.push({ k: 'v', x: list[3].x, y: list[3].y, id: list[3].id, s: 1 });
+          }],
+        ];
+      },
+    },
+    // Começo da partida: todos chocam ao mesmo tempo e estouram juntos (orçamento de partículas).
+    eclosao: {
+      ms: 6000,
+      steps: () => [
+        [0, () => {
+          onMsg(startMsg());
+          ph = 'coleta';
+          el = 0;
+          const me = ents.get(ME)!;
+          setLook(me, 'neutro', 0, []);
+          hatchEv(me);
+          for (let i = 0; i < 13; i++) {
+            const a = (i / 13) * Math.PI * 2 + 0.3;
+            const r = 2.5 + (i % 3) * 1.6;
+            const [x, y] = near(mx + Math.round(Math.cos(a) * r), my + Math.round(Math.sin(a) * r * 0.8));
+            // No começo todos são neutros; alguns renascidos já têm cor (manchas no ovo).
+            const f = i < 9 ? 'neutro' : FORMS[i - 8];
+            hatchEv(player(nextId++, `Bot${i + 1}`, x, y, f, 0, ORDER_OF[f]));
+          }
+        }],
+      ],
+    },
+    // Morte e renascimento: no mesmo snapshot, com atraso, e o seu (a câmera acompanha).
+    renascer: {
+      ms: 10000,
+      steps: () => {
+        const me = ents.get(ME)!;
+        setLook(me, 'mare', 1, ['mare']);
+        const a = player(nextId++, 'Rival', mx - 2, my + 2, 'brasa', 3, ['brasa']);
+        const b = player(nextId++, 'Nina', mx - 1, my + 2, 'broto', 0, ['broto', 'mare']);
+        const c = player(nextId++, 'Zeca', mx + 3, my - 1, 'vapor', 1, ['brasa', 'mare']);
+        a.ln = 'guerreiro';
+        a.tl = 2;
+        taken.add(b.y * map.w + b.x);
+        return [
+          [200, () => btEv(a, b)],
+          [700, () => hit(a, b, 60, 'ataque', 1)],
+          // Renasce no mesmo snapshot do 'x', com o mesmo id, longe dali.
+          [1500, () => {
+            endBattle(a.b ?? 0);
+            dieEv(b, a.id, 'b', near(mx + 4, my + 3));
+          }],
+          // A zona leva o Zeca; ele volta 1,2 s depois.
+          [4200, () => dieEv(c, 0, 'z', near(mx - 4, my - 2), 1200)],
+          // Você morre e renasce 6 tiles para lá (a câmera desliza até o ovo).
+          [6200, () => dieEv(me, a.id, 'b', near(mx + 6, my - 1), 900)],
+        ];
+      },
+    },
+    // Os três Especiais entre outros bichos e depois em você (tremor forte).
+    especiais: {
+      ms: 11000,
+      steps: () => {
+        const me = ents.get(ME)!;
+        me.ln = 'mago';
+        me.tl = 1;
+        const a = player(nextId++, 'Rival', mx - 4, my - 2, 'brasa', 3, ['brasa']);
+        const b = player(nextId++, 'Nina', mx - 3, my - 2, 'broto', 2, ['broto']);
+        const c = player(nextId++, 'Zeca', mx + 2, my - 2, 'mare', 2, ['mare']);
+        const d = player(nextId++, 'Bia', mx + 3, my - 2, 'cinza', 2, ['brasa', 'broto']);
+        const e = player(nextId++, 'Tico', mx - 2, my + 2, 'broto', 2, ['broto']);
+        const f = player(nextId++, 'Lia', mx - 1, my + 2, 'mare', 1, ['mare']);
+        const g = player(nextId++, 'Duda', mx + 1, my, 'cinza', 3, ['broto', 'brasa']);
+        a.ln = 'guerreiro';
+        a.tl = 2;
+        c.ln = 'mago';
+        c.tl = 2;
+        e.ln = 'cacador';
+        e.tl = 1;
+        g.ln = 'guerreiro';
+        g.tl = 1;
+        return [
+          [100, () => {
+            battle(a, b);
+            battle(c, d);
+            battle(e, f);
+          }],
+          [400, () => special(a, b, 26, 'brutal')],
+          [1900, () => special(c, d, 22, 'arcana')],
+          [3400, () => special(e, f, 18, 'armadilha')],
+          [5000, () => {
+            b.hp = b.mhp;
+            d.hp = d.mhp;
+            f.hp = f.mhp;
+            battle(g, me);
+          }],
+          // Em você: Brutal do oponente, sua Arcana e a Armadilha dele.
+          [5400, () => special(g, me, 30, 'brutal')],
+          [7200, () => special(me, g, 24, 'arcana')],
+          [9000, () => special(g, me, 16, 'armadilha')],
+        ];
+      },
+    },
+    // Compra na loja: brilho na cor da linha e o distintivo aparecendo ao lado do nome.
+    compra: {
+      ms: 8000,
+      steps: () => {
+        const me = ents.get(ME)!;
+        const a = player(nextId++, 'Rival', mx - 2, my + 1, 'brasa', 2, ['brasa']);
+        const b = player(nextId++, 'Nina', mx + 2, my + 1, 'broto', 2, ['broto']);
+        const c = player(nextId++, 'Zeca', mx + 1, my + 1, 'mare', 1, ['mare']);
+        return [
+          [300, () => buyEv(me, 'm_foco')],
+          [900, () => buyEv(a, 'g_couro')],
+          [1500, () => buyEv(b, 'c_passos')],
+          [2100, () => buyEv(me, 'm_canal', 'mago', 1)],
+          [2700, () => buyEv(a, 'g_pesado', 'guerreiro', 1)],
+          [3300, () => buyEv(b, 'c_faro', 'cacador', 1)],
+          [3900, () => buyEv(c, 'm_escudo')],
+          [4500, () => buyEv(a, 'g_contra')],
+          [5100, () => buyEv(a, 'g_brutal', 'guerreiro', 2)],
+          [5700, () => buyEv(me, 'm_escudo')],
+          [6300, () => buyEv(me, 'm_arcana', 'mago', 2)],
+          // Nomes colados numa batalha: o distintivo entra na separação dos rótulos.
+          [6900, () => battle(b, c)],
+        ];
+      },
+    },
     feiticos: {
       ms: 9600,
       steps: () => {
@@ -237,9 +512,44 @@ export function runFxDemo({ onMsg, scene, name }: Ctx): void {
         const me = ents.get(ME)!;
         const o = player(nextId++, 'Rival', mx + 1, my, 'broto', 2, ['broto']);
         let bt = 0;
-        const info = (e: EntSnap) => ({ name: e.n ?? 'Selvagem', look: { form: e.f, stage: e.s, order: e.o }, hp: e.hp, mhp: e.mhp, charged: !!e.ch, trophies: 0, wild: e.k === 'w' });
-        const reveal = (turn: number, you: Action, opp: Action, dYou: number, dOpp: number, winner: 'you' | 'opp' | 'tie', text: string) =>
-          onMsg({ t: 'b_reveal', id: bt, turn, you, opp, dmgYou: dYou, dmgOpp: dOpp, hpYou: me.hp, hpOpp: o.hp, chYou: false, chOpp: false, winner, text });
+        const info = (e: EntSnap) => ({
+          name: e.n ?? 'Selvagem',
+          look: { form: e.f, stage: e.s, order: e.o },
+          hp: e.hp,
+          mhp: e.mhp,
+          charged: !!e.ch,
+          trophies: 0,
+          wild: e.k === 'w',
+          skills: [],
+          special: null,
+          specialLeft: 0,
+        });
+        const reveal = (turn: number, you: Exclude<Action, 'especial'>, opp: Exclude<Action, 'especial'>, dYou: number, dOpp: number, winner: 'you' | 'opp' | 'tie', text: string) =>
+          onMsg({
+            t: 'b_reveal',
+            id: bt,
+            turn,
+            you,
+            opp,
+            dmgYou: dYou,
+            dmgOpp: dOpp,
+            hpYou: me.hp,
+            hpOpp: o.hp,
+            chYou: false,
+            chOpp: false,
+            winner,
+            text,
+            moveYou: you,
+            moveOpp: opp,
+            healYou: 0,
+            healOpp: 0,
+            dodgeYou: false,
+            dodgeOpp: false,
+            shieldYou: false,
+            shieldOpp: false,
+            spLeftYou: 0,
+            spLeftOpp: 0,
+          });
         return [
           [200, () => {
             bt = battle(me, o);
@@ -429,7 +739,7 @@ export function runFxDemo({ onMsg, scene, name }: Ctx): void {
         const b = player(nextId++, 'Nina', mx - 2, my + 2, 'mare', 2, ['mare']);
         const c = player(nextId++, 'Zeca', mx + 2, my + 2, 'broto', 3, ['broto']);
         const d = player(nextId++, 'Bia', mx + 3, my + 2, 'quimera', 3, ['brasa', 'mare', 'broto']);
-        const e = player(nextId++, 'Ovo', mx - 2, my - 2, 'neutro', 0, []);
+        const e = player(nextId++, 'Bolinha', mx - 2, my - 2, 'neutro', 0, []);
         const w = wild(mx - 1, my - 2, 'brasa');
         return [
           [100, () => {
@@ -746,6 +1056,8 @@ export function runFxDemo({ onMsg, scene, name }: Ctx): void {
   let cur = '';
   const start = (n: string) => {
     reset();
+    pendingSteps.length = 0;
+    sceneT = 0;
     cur = n;
     steps = SCENES[n].steps().sort((p, q) => p[0] - q[0]);
     t0 = performance.now();
@@ -810,21 +1122,42 @@ export function runFxDemo({ onMsg, scene, name }: Ctx): void {
         crown: !!me?.cr,
         battle: me?.b ?? null,
         target,
+        essence: 6,
+        skills: mySkills,
+        power: (me?.s ?? 0) * 100,
+        deaths,
+        hatchMs: me?.hx ? Math.max(0, (hatching.get(ME) ?? sceneT) - sceneT) : 0,
       },
       view: v?.id ?? null,
       crown,
       // Placar com todos os jogadores (o servidor manda o lb inteiro, com a Coroa, mesmo fora da vista).
-      lb: [...ents.values()].filter((e) => e.k === 'p').map((e) => ({ id: e.id, n: e.n ?? '', s: e.s, f: e.f, ...(e.cr ? { cr: 1 as const } : {}) })),
+      lb: [...ents.values()]
+        .filter((e) => e.k === 'p')
+        .map((e) => ({ id: e.id, n: e.n ?? '', s: e.s, f: e.f, pw: e.s * 100, ...(e.cr ? { cr: 1 as const } : {}), ...(e.ln && e.tl ? { ln: e.ln, tl: e.tl } : {}) })),
       duel,
       ...(fx ? { fx } : {}),
     };
   };
 
-  onMsg({ t: 'start', you: ME, w: map.w, h: map.h, tiles: encodeTiles(map.tiles), fruits: map.fruits, players: 8 });
+  const startMsg = (): ServerMsg => ({ t: 'start', you: ME, w: map.w, h: map.h, tiles: encodeTiles(map.tiles), fruits: map.fruits, players: 8, gm: 'rapido' });
+  onMsg(startMsg());
   next();
   window.setInterval(() => {
     const t = performance.now() - t0;
+    sceneT = t;
     while (steps.length && steps[0][0] <= t) steps.shift()![1]();
+    for (let i = pendingSteps.length - 1; i >= 0; i--) {
+      if (pendingSteps[i][0] > t) continue;
+      const fn = pendingSteps[i][1];
+      pendingSteps.splice(i, 1);
+      fn();
+    }
+    for (const [id, at] of hatching) {
+      if (t < at) continue;
+      const e = ents.get(id);
+      if (e) delete e.hx;
+      hatching.delete(id);
+    }
     stepWalkers();
     el += 100;
     onMsg(snapshot());
