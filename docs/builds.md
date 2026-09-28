@@ -53,3 +53,44 @@ Decisões do usuário (27/09/2026):
 - Distintivo da linha do título ao lado do nome (ícone, com destaque para o mestre).
 - Especiais: golpe gigante (Brutal), orbe e raio arcano roxo (Arcana), rede e espinhos (Armadilha) no FxEvent `h` com `sp`.
 - Compra: brilho na cor da linha (FxEvent `k`).
+
+## Ajustes feitos no balanceamento
+
+Estes números saíram das simulações (`npm run sim -- N P modo`). Todos ficam em `shared/src/balance.ts`, `modes.ts` e `skills.ts`.
+
+**Economia**
+- **Essência:** começa com 3. Rende 2 por selvagem, 4 por fruta, 5 por vitória contra jogador, +5 por derrubar a Coroa e 3 por abate.
+- **Custos:** 9 / 18 / 30 por nível; o Faro custa 14.
+- **Multiplicador do Avançado:** `essenceMult` = 0,45, com a fração guardada por jogador (`Player.essenceFrac`). Sem ele a build completava por volta dos 9 minutos. Com ele, em 60 partidas de 16 bots:
+  - 3,6 habilidades no fim da Coleta;
+  - 6,8 no fim da Caçada;
+  - 7,1 no Duelo (os finalistas, 8,0).
+
+**Habilidades**
+- Couro Grosso dá +20% de HP e Golpe Pesado +40% de dano.
+- Aprendiz de Guerreiro dá +10% de dano.
+- Sede de Batalha cura 8% por turno vencido.
+- Passos Leves dá +15% de velocidade e Rastreador +10%.
+- O Predador rouba 2 de Essência.
+- Armadilha causa ×1,4.
+
+**Força**
+- As habilidades contam pelo custo, e a Essência guardada conta ×0,5.
+- A Coroa vai para a maior Força a partir do nível 2, com 10 pontos de histerese para não ficar trocando de dono.
+
+**Renascimento**
+- Quem renasce sai do ovo com a Fome: 5 s de proteção e XP em dobro por 30 s.
+- A quantidade de selvagens não cresce com o tamanho da arena.
+- Um clique dado durante a eclosão fica guardado e é executado quando o bicho sai do ovo.
+
+**Taxa de vitória por linha (build dominante do campeão)**
+
+| Modo | Guerreiro | Mago | Caçador |
+|---|---|---|---|
+| Rápido | 34% | 30% | 37% |
+| Clássico | 31% | 34% | 36% |
+| Avançado | 38% | 35% | 27% |
+
+A meta é nenhuma linha passar de 45%. Os finalistas foram sempre as 2 maiores Forças (500 partidas).
+
+**Em observação:** a Quimera vence com frequência no Avançado. O motivo é a distribuição das formas, não as builds.
