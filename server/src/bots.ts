@@ -1,12 +1,41 @@
-import { ELEMS, biomeAt, chebyshev, isWalkable, maxHp, type Action, type Rng, type Vec } from '@vb/shared';
+import {
+  ELEMS,
+  LINES,
+  SKILLS,
+  SKILL_IDS,
+  biomeAt,
+  canBuy,
+  chebyshev,
+  isWalkable,
+  lineCounts,
+  specialOf,
+  type Action,
+  type BasicAction,
+  type Line,
+  type Rng,
+  type SkillId,
+  type Vec,
+} from '@vb/shared';
 import type { BotBrain, Player } from './entities';
 import type { Room } from './room';
 
-export function makeBrain(rng: Rng): BotBrain {
-  return { pref: rng.pick(ELEMS), nextThinkAt: 0, aggro: 0.35 + rng.next() * 0.55 };
+/** Chance de o bot usar o Especial num turno em que ainda tem uso. */
+export const BOT_SPECIAL_CHANCE = 0.35;
+
+export function makeBrain(rng: Rng, line: Line = rng.pick(LINES)): BotBrain {
+  const second = rng.pick(LINES.filter((l) => l !== line));
+  return { pref: rng.pick(ELEMS), nextThinkAt: 0, aggro: 0.35 + rng.next() * 0.55, line, second };
 }
 
-function weighted(rng: Rng, w: Record<Action, number>): Action {
+/** Linha com mais habilidades (para o bot que assume um humano continuar a build dele). */
+export function dominantLine(skills: readonly SkillId[]): Line | null {
+  const c = lineCounts(skills);
+  let best: Line | null = null;
+  for (const l of LINES) if (c[l] > 0 && (best === null || c[l] > c[best])) best = l;
+  return best;
+}
+
+function weighted(rng: Rng, w: Record<BasicAction, number>): BasicAction {
   const total = w.ataque + w.defesa + w.carga;
   let r = rng.next() * total;
   for (const a of ['ataque', 'defesa', 'carga'] as const) {
@@ -16,8 +45,9 @@ function weighted(rng: Rng, w: Record<Action, number>): Action {
   return 'defesa';
 }
 
-/** Escolha do bot na batalha: um pouco de leitura, bastante imprevisibilidade. */
-export function botChoose(rng: Rng, selfCharged: boolean, oppCharged: boolean, hpPct: number): Action {
+/** Escolha do bot na batalha: um pouco de leitura, bastante imprevisibilidade e o Especial às vezes. */
+export function botChoose(rng: Rng, selfCharged: boolean, oppCharged: boolean, hpPct: number, canSpecial = false): Action {
+  if (canSpecial && rng.chance(BOT_SPECIAL_CHANCE)) return 'especial';
   if (selfCharged) return weighted(rng, { ataque: 0.5, defesa: 0.2, carga: 0.3 });
   if (oppCharged) return weighted(rng, { ataque: 0.3, defesa: 0.45, carga: 0.25 });
   if (hpPct < 0.35) return weighted(rng, { ataque: 0.3, defesa: 0.4, carga: 0.3 });
@@ -28,7 +58,24 @@ export function wildChoose(rng: Rng): Action {
   return weighted(rng, { ataque: 0.45, defesa: 0.3, carga: 0.25 });
 }
 
-const hpPct = (p: Player) => p.hp / maxHp(p.stage);
+/**
+ * Próxima habilidade que o bot quer: a linha preferida em ordem (junta Essência para ela) e,
+ * com ela completa, a segunda linha e depois o resto, sem trocar o próprio Especial.
+ */
+export function botWish(p: Player, brain: Pick<BotBrain, 'line' | 'second'>, room: Room): SkillId | null {
+  const blocked = (id: SkillId) => canBuy(p.skills, Number.MAX_SAFE_INTEGER, id, room.gm) !== null;
+  for (const id of SKILL_IDS) {
+    if (SKILLS[id].line !== brain.line || p.skills.includes(id)) continue;
+    if (!blocked(id)) return id;
+  }
+  const hasSpecial = specialOf(p.skills) !== null;
+  const rest = (id: SkillId) => SKILLS[id].line !== brain.line && !p.skills.includes(id) && !(hasSpecial && SKILLS[id].special);
+  const others = [...SKILL_IDS.filter((id) => rest(id) && SKILLS[id].line === brain.second), ...SKILL_IDS.filter((id) => rest(id) && SKILLS[id].line !== brain.second)];
+  for (const id of others) if (!blocked(id)) return id;
+  return null;
+}
+
+const hpPct = (room: Room, p: Player) => p.hp / room.maxHpOf(p);
 
 /** Ponto aleatório dentro da zona, de preferência no bioma escolhido. */
 function randomSpot(room: Room, pref: Vec | null, elem: BotBrain['pref'] | null): Vec | null {
@@ -50,6 +97,10 @@ export function botThink(room: Room, p: Player, now: number): void {
   brain.nextThinkAt = now + 500 + room.rng.next() * 500;
   const zone = room.zone;
 
+  // 0. Loja: compra a habilidade desejada assim que tiver Essência.
+  const wish = botWish(p, brain, room);
+  if (wish && p.essence >= SKILLS[wish].cost) room.buy(p, wish);
+
   // 1. Fugir da zona: vai em direção ao centro.
   const distCenter = Math.hypot(p.x - zone.x, p.y - zone.y);
   if (distCenter > Math.max(0.5, zone.r - 2) && zone.r < zone.r0) {
@@ -58,11 +109,11 @@ export function botThink(room: Room, p: Player, now: number): void {
     return;
   }
 
-  const players = room.alivePlayers().filter((q) => q !== p);
+  const players = room.alivePlayers().filter((q) => q !== p && !room.isHatching(q));
   const hunting = room.phase !== 'coleta';
 
   // 2. Com pouca vida e alguém forte por perto: recuar.
-  if (hunting && hpPct(p) < 0.35) {
+  if (hunting && hpPct(room, p) < 0.35) {
     const threat = players.find((q) => chebyshev(p, q) <= 5 && q.stage >= p.stage && !q.battle);
     if (threat) {
       const dx = p.x - threat.x;
@@ -78,15 +129,12 @@ export function botThink(room: Room, p: Player, now: number): void {
 
   // 3. Caçar jogadores na Caçada/Final.
   const endgame = room.phase === 'final';
-  if (hunting && (endgame ? hpPct(p) > 0.25 : hpPct(p) > 0.45 && room.rng.chance(brain.aggro))) {
+  if (hunting && (endgame ? hpPct(room, p) > 0.25 : hpPct(room, p) > 0.45 && room.rng.chance(brain.aggro))) {
     const prey = players
       .filter((q) => chebyshev(p, q) <= 10 && q.shieldUntil <= now)
-      .filter((q) => q.stage < p.stage || (q.stage === p.stage && hpPct(q) <= hpPct(p)) || q.id === room.crownId || hpPct(q) < 0.4 || endgame)
+      .filter((q) => q.stage < p.stage || (q.stage === p.stage && hpPct(room, q) <= hpPct(room, p)) || q.id === room.crownId || hpPct(room, q) < 0.4 || endgame)
       .sort((a, b) => chebyshev(p, a) - chebyshev(p, b))[0];
-    if (prey) {
-      room.setTarget(p, prey.id);
-      return;
-    }
+    if (prey && room.setTarget(p, prey.id)) return;
   }
 
   // 4. Fruta rara próxima.
@@ -117,4 +165,3 @@ export function botThink(room: Room, p: Player, now: number): void {
     if (spot) room.moveTo(p, spot.x, spot.y);
   }
 }
-

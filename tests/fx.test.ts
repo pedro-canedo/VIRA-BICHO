@@ -14,17 +14,17 @@ import {
   type Snap,
   type Stage,
 } from '@vb/shared';
-import type { Player } from '../server/src/entities';
+import type { Battle, Player } from '../server/src/entities';
 import { Room, type Member } from '../server/src/room';
 
 type Ev<K extends FxEvent['k']> = Extract<FxEvent, { k: K }>;
 
 /** Acesso aos internos da fila só para os testes. */
-type RoomFx = { fxq: FxEvent[]; fx(ev: FxEvent): void; sendSnapshots(): void; combatant(e: Player, charged: boolean): Parameters<typeof resolveTurn>[0] };
+type RoomFx = { fxq: FxEvent[]; fx(ev: FxEvent): void; sendSnapshots(): void; combatant(bt: Battle, side: 'a' | 'b'): Parameters<typeof resolveTurn>[0] };
 const internals = (room: Room) => room as unknown as RoomFx;
 
-/** Sala com humanos e bots parados (sem cérebro), para os eventos saírem só do que o teste provoca. */
-function setup(humans = 1, total = 8) {
+/** Sala com humanos e bots parados (sem cérebro), já fora do ovo, para os eventos saírem só do que o teste provoca. */
+function setup(humans = 1, total = 8, hatched = true) {
   const room = new Room('FXFX', true, 7);
   const members: { m: Member; msgs: ServerMsg[] }[] = [];
   let now = 1_000_000;
@@ -38,6 +38,7 @@ function setup(humans = 1, total = 8) {
   const me = members[0].m.player!;
   const bots = [...room.players.values()].filter((p) => !p.conn).sort((a, b) => a.id - b.id);
   for (const b of bots) b.bot = null;
+  if (hatched) for (const p of room.players.values()) p.hatchUntil = 0;
   const c = nearestWalkable(room.map, room.zone.x, room.zone.y);
   const place = (p: Player, dx: number, dy = 0) => {
     p.x = c.x + dx;
@@ -68,14 +69,19 @@ function setup(humans = 1, total = 8) {
 }
 
 describe('eventos visuais (Snap.fx)', () => {
-  it('snapshot sem eventos não tem a chave fx, e o povoamento inicial não gera eventos', () => {
-    const { room, tick, lastSnap, snaps } = setup();
-    expect(internals(room).fxq).toHaveLength(0);
+  it('o nascimento gera um r por jogador no 1º snapshot; depois, snapshot sem eventos não tem a chave fx (o povoamento inicial não gera eventos)', () => {
+    const { room, me, tick, lastSnap, snaps } = setup(1, 8, false);
+    expect(internals(room).fxq.map((e) => e.k)).toEqual(Array(8).fill('r'));
+    tick();
+    const first = snaps()[0].fx ?? [];
+    expect(first.every((e) => e.k === 'r')).toBe(true);
+    expect(first).toContainEqual({ k: 'r', x: me.x, y: me.y, id: me.id });
+    expect(snaps()[0].ents.find((e) => e.id === me.id)?.hx).toBe(1);
     for (let i = 0; i < 5; i++) tick();
     const s = lastSnap();
     expect('fx' in s).toBe(false);
     expect(JSON.stringify(s)).not.toContain('"fx"');
-    expect(snaps().every((x) => !('fx' in x))).toBe(true);
+    expect(snaps().slice(1).every((x) => !('fx' in x))).toBe(true);
   });
 
   it('turno PvP gera um h coerente com o b_reveal, que não reaparece no tick seguinte', () => {
@@ -185,7 +191,7 @@ describe('eventos visuais (Snap.fx)', () => {
     }
   });
 
-  it('vencer um ovo gera x com r b e o visual do eliminado, que recebe o próprio x mesmo com a câmera longe', () => {
+  it('vencer um bebê gera x com r b e o visual do morto, e ele renasce (r) chocando longe dos outros', () => {
     const { room, me, bots, place, set, tick, advanceTo, ofKind, runBattle, choose, lastSnap } = setup();
     advanceTo(BALANCE.phases.coletaEnd + 1000);
     tick();
@@ -197,16 +203,24 @@ describe('eventos visuais (Snap.fx)', () => {
     place(me, -R + 2);
     place(foe, R - 2); // a câmera vai para o vencedor, a mais de R+1 tiles do eliminado
     const look = room.look(me);
+    const at = { x: me.x, y: me.y };
     room.startBattle(foe, me);
     me.hp = 1;
     choose(foe, 'ataque', me, 'carga');
     runBattle(me);
-    expect(me.alive).toBe(false);
-    expect(lastSnap().view).toBe(foe.id);
+    // Ninguém sai da partida: morre, perde parte do que juntou e renasce bebê chocando.
+    expect(me.alive).toBe(true);
+    expect(me.stats.deaths).toBe(1);
+    expect(room.isHatching(me)).toBe(true);
+    expect(lastSnap().view).toBe(me.id);
     const xs = ofKind('x');
     expect(xs).toHaveLength(1);
-    expect(xs[0]).toEqual({ k: 'x', x: me.x, y: me.y, id: me.id, f: look.form, s: look.stage, o: look.order, by: foe.id, r: 'b' });
-    expect(Math.abs(xs[0].x - foe.x)).toBeGreaterThan(R + 1);
+    expect(xs[0]).toEqual({ k: 'x', x: at.x, y: at.y, id: me.id, f: look.form, s: look.stage, o: look.order, by: foe.id, r: 'b' });
+    // O 1º r é o nascimento da partida; o 2º, o renascimento.
+    const rs = ofKind('r').filter((e) => e.id === me.id);
+    expect(rs).toHaveLength(2);
+    expect(rs[1]).toEqual({ k: 'r', x: me.x, y: me.y, id: me.id });
+    expect(Math.max(Math.abs(me.x - foe.x), Math.abs(me.y - foe.y))).toBeGreaterThanOrEqual(BALANCE.respawn.minDist);
     expect(ofKind('s')).toHaveLength(0);
   });
 
@@ -245,8 +259,8 @@ describe('eventos visuais (Snap.fx)', () => {
     expect(me.stage).toBe(1);
   });
 
-  it('a zona queimando um estágio gera z; sem estágio, x com r z', () => {
-    const { me, set, tick, advanceTo, ofKind } = setup();
+  it('a zona queimando um estágio gera z; sem estágio, x com r z e o renascimento (r) dentro da zona', () => {
+    const { room, me, set, tick, advanceTo, ofKind } = setup();
     advanceTo(BALANCE.phases.cacadaEnd + 1000);
     tick();
     set(me, 1);
@@ -258,7 +272,10 @@ describe('eventos visuais (Snap.fx)', () => {
     me.hp = 0.01;
     me.shieldUntil = 0;
     tick();
-    expect(ofKind('x')).toMatchObject([{ id: me.id, r: 'z', by: 0, s: 0 }]);
+    expect(ofKind('x')).toMatchObject([{ id: me.id, r: 'z', by: 0, s: 0, x: 0, y: 0 }]);
+    expect(ofKind('r').filter((e) => e.id === me.id).at(-1)).toEqual({ k: 'r', x: me.x, y: me.y, id: me.id });
+    expect(room.inZone(me)).toBe(true);
+    expect(me.alive).toBe(true);
   });
 
   it('selvagem que surge durante a partida gera w', () => {
@@ -308,7 +325,7 @@ describe('eventos visuais (Snap.fx)', () => {
     place(foe, 1);
     room.startBattle(me, foe);
     const q = internals(room);
-    const dmg = resolveTurn(q.combatant(me, false), q.combatant(foe, false), 'ataque', 'carga').dmgToB;
+    const dmg = resolveTurn(q.combatant(me.battle!, 'a'), q.combatant(me.battle!, 'b'), 'ataque', 'carga').dmgToB;
     foe.hp = dmg + 0.3; // sobra 0,3 de HP (regeneração/zona deixam o HP fracionário)
     choose(me, 'ataque', foe, 'carga');
     const before = members[0].msgs.length;
@@ -361,8 +378,8 @@ describe('eventos visuais (Snap.fx)', () => {
     expect(q.fxq).toHaveLength(0);
 
     // Partida inteira com os bots jogando.
-    for (const b of bots) b.bot = { pref: 'brasa', nextThinkAt: 0, aggro: 0.8 };
-    me.bot = { pref: 'mare', nextThinkAt: 0, aggro: 0.8 };
+    for (const b of bots) b.bot = { pref: 'brasa', nextThinkAt: 0, aggro: 0.8, line: 'guerreiro', second: 'mago' };
+    me.bot = { pref: 'mare', nextThinkAt: 0, aggro: 0.8, line: 'cacador', second: 'mago' };
     for (let i = 0; i < 5000 && room.state === 'play'; i++) tick();
     expect(room.state).toBe('fim');
     const withFx = snaps().filter((s) => s.fx);

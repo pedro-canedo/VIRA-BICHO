@@ -344,7 +344,7 @@ export class GameMetrics implements LobbyHooks {
     try {
       this.counters.joins++;
       const meta = this.conns.get(conn);
-      this.emit('join', { name: member.name, mode, room: room.code, country: meta?.country ?? 'XX', device: meta?.device ?? 'desktop' });
+      this.emit('join', { name: member.name, mode, room: room.code, country: meta?.country ?? 'XX', device: meta?.device ?? 'desktop', gm: room.gm });
     } catch {
       this.internalErrors++;
     }
@@ -365,7 +365,7 @@ export class GameMetrics implements LobbyHooks {
       const humans = room.members.size;
       const players = room.totalPlayers;
       this.humansAtStart.set(room, humans);
-      this.emit('match_start', { room: room.code, humans, bots: Math.max(0, players - humans), players });
+      this.emit('match_start', { room: room.code, humans, bots: Math.max(0, players - humans), players, gm: room.gm });
     } catch {
       this.internalErrors++;
     }
@@ -383,6 +383,7 @@ export class GameMetrics implements LobbyHooks {
         form: winner ? room.look(winner).form : null,
         durationMs: Math.max(0, end - room.startedAt),
         humans: this.humansAtStart.get(room) ?? room.members.size,
+        gm: room.gm,
       });
     } catch {
       this.internalErrors++;
@@ -404,6 +405,7 @@ export class GameMetrics implements LobbyHooks {
     else b.final++;
   }
 
+  /** Mortes (com renascimento) e saídas no Duelo Final: as duas contam em eliminations. */
   eliminated(_room: Room, _p: Player): void {
     this.counters.eliminations++;
   }

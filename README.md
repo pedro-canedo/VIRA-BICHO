@@ -65,7 +65,7 @@ npm install
 npm run dev        # servidor (tsx watch, :3000) + Vite (:5173, com proxy do WebSocket)
 npm test           # testes unitários + partidas simuladas
 npm run typecheck
-npm run sim -- 30 16   # estatísticas de balanceamento: 30 partidas com 16 bots
+npm run sim -- 30 16 classico   # balanceamento: 30 partidas com 16 bots no modo Clássico (rapido | classico | avancado)
 npm run build      # dist/public (cliente) + dist/server.mjs (servidor) + dist/obs.mjs e dist/obs-public (observador)
 npm start          # roda o build em :3000
 npm run dev:obs    # painel de observabilidade em :3001 com um jogo falso simulado
