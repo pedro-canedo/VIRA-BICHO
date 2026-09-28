@@ -67,6 +67,12 @@ describe('Especiais no triângulo', () => {
     expect(fighter(['m_arcana', 'm_tempestade']).specialLeft).toBe(2);
   });
 
+  it('Armadilha vencendo causa ×1,4 (vence Ataque e Defesa)', () => {
+    const r = resolveTurn(fighter(['c_armadilha']), fighter(), 'especial', 'defesa');
+    expect(r.winner).toBe('a');
+    expect(r.dmgToB).toBe(Math.round(BALANCE.dmg[1] * 1.4));
+  });
+
   it('Especiais contra Especiais se chocam', () => {
     const r = resolveTurn(fighter(['g_brutal']), fighter(['c_armadilha']), 'especial', 'especial');
     expect(r.winner).toBe('tie');
@@ -78,7 +84,7 @@ describe('Especiais no triângulo', () => {
 describe('passivas', () => {
   it('Golpe Pesado, Contra-ataque e Canalizar mudam o dano de quem vence', () => {
     const d = BALANCE.dmg[1];
-    expect(resolveTurn(fighter(['g_pesado']), fighter(), 'ataque', 'carga').dmgToB).toBe(Math.round(d * 1.3));
+    expect(resolveTurn(fighter(['g_pesado']), fighter(), 'ataque', 'carga').dmgToB).toBe(Math.round(d * 1.4));
     expect(resolveTurn(fighter(['g_contra']), fighter(), 'defesa', 'ataque').dmgToB).toBe(d);
     expect(resolveTurn(fighter(['m_canal']), fighter(), 'carga', 'defesa').dmgToB).toBe(d);
   });
@@ -100,7 +106,8 @@ describe('passivas', () => {
 
   it('Sede de Batalha cura quem vence o turno', () => {
     const r = resolveTurn(fighter(['g_sede']), fighter(), 'ataque', 'carga');
-    expect(r.healA).toBe(10);
+    expect(r.healA).toBe(8);
+    expect(resolveTurn(fighter(['g_sede']), fighter(), 'carga', 'ataque').healA).toBe(0);
   });
 
   it('Foco Elemental amplia a vantagem de tipo', () => {
@@ -119,12 +126,18 @@ describe('conjuntos, títulos e compras', () => {
     expect(titleOf(['g_couro', 'g_pesado'])?.name).toBe('Aprendiz de Guerreiro');
     expect(titleOf(['m_foco', 'm_canal', 'm_escudo', 'm_arcana'])?.name).toBe('Arquimago');
     expect(modsOf(['m_foco', 'm_canal', 'm_escudo', 'm_arcana']).startCharged).toBe(true);
-    expect(modsOf(['c_passos', 'c_faro']).speedMult).toBeCloseTo(1.4);
+    expect(modsOf(['c_passos', 'c_faro']).speedMult).toBeCloseTo(1.25);
+    const champ = modsOf(['g_couro', 'g_pesado', 'g_contra', 'g_brutal']);
+    expect(champ.hpMult).toBeCloseTo(1.3);
+    expect(champ.dmgMult).toBeCloseTo(1.2);
+    expect(modsOf(['c_passos', 'c_faro', 'c_esquiva', 'c_armadilha']).stealEssence).toBe(2);
   });
 
   it('respeita Essência, vagas por modo e maestria', () => {
-    expect(canBuy([], 2, 'g_couro', 'rapido')).toBe('essence');
-    expect(canBuy([], 3, 'g_couro', 'rapido')).toBeNull();
+    const cost = SKILLS.g_couro.cost;
+    expect(cost).toBe(9);
+    expect(canBuy([], cost - 1, 'g_couro', 'rapido')).toBe('essence');
+    expect(canBuy([], cost, 'g_couro', 'rapido')).toBeNull();
     expect(canBuy(['g_couro'], 99, 'g_couro', 'rapido')).toBe('owned');
     expect(canBuy([], 99, 'g_sede', 'rapido')).toBe('mastery');
     expect(canBuy([], 99, 'g_sede', 'classico')).toBeNull();

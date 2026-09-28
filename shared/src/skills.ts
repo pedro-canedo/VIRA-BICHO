@@ -55,7 +55,7 @@ export const LINE_INFO: Record<Line, LineInfo> = {
     icon: '🗡️',
     color: '#ff6b5e',
     titles: ['Aprendiz de Guerreiro', 'Campeão'],
-    bonus: ['+5% de dano', '+10% de HP e +10% de dano'],
+    bonus: ['+10% de dano', '+10% de HP e +10% de dano'],
   },
   mago: {
     name: 'Mago',
@@ -69,15 +69,15 @@ export const LINE_INFO: Record<Line, LineInfo> = {
     icon: '🏹',
     color: '#58e07a',
     titles: ['Rastreador', 'Predador'],
-    bonus: ['Anda 15% mais rápido', 'Vencer um jogador rouba 3 de Essência dele'],
+    bonus: ['Anda 10% mais rápido', 'Vencer um jogador rouba 2 de Essência dele'],
   },
 };
 
-const COST = { 1: 3, 2: 6, 3: 10 } as const;
+const COST = { 1: 9, 2: 18, 3: 30 } as const;
 
 export const SKILLS: Record<SkillId, SkillDef> = {
-  g_couro: { id: 'g_couro', line: 'guerreiro', tier: 1, cost: COST[1], name: 'Couro Grosso', icon: '🛡️', desc: '+15% de HP máximo.' },
-  g_pesado: { id: 'g_pesado', line: 'guerreiro', tier: 1, cost: COST[1], name: 'Golpe Pesado', icon: '🔨', desc: 'Ataque vencedor causa +30% de dano.' },
+  g_couro: { id: 'g_couro', line: 'guerreiro', tier: 1, cost: COST[1], name: 'Couro Grosso', icon: '🛡️', desc: '+20% de HP máximo.' },
+  g_pesado: { id: 'g_pesado', line: 'guerreiro', tier: 1, cost: COST[1], name: 'Golpe Pesado', icon: '🔨', desc: 'Ataque vencedor causa +40% de dano.' },
   g_contra: { id: 'g_contra', line: 'guerreiro', tier: 2, cost: COST[2], name: 'Contra-ataque', icon: '↩️', desc: 'Defesa vencedora devolve 100% do dano (em vez de 50%).' },
   g_brutal: {
     id: 'g_brutal',
@@ -89,7 +89,7 @@ export const SKILLS: Record<SkillId, SkillDef> = {
     desc: 'Especial: vence Ataque e Carga com dano ×1,6. Perde para Defesa.',
     special: 'brutal',
   },
-  g_sede: { id: 'g_sede', line: 'guerreiro', tier: 3, cost: COST[3], name: 'Sede de Batalha', icon: '🩸', desc: 'Cada turno vencido cura 10% do HP máximo.' },
+  g_sede: { id: 'g_sede', line: 'guerreiro', tier: 3, cost: COST[3], name: 'Sede de Batalha', icon: '🩸', desc: 'Cada turno vencido cura 8% do HP máximo.' },
   m_foco: { id: 'm_foco', line: 'mago', tier: 1, cost: COST[1], name: 'Foco Elemental', icon: '🌀', desc: 'Vantagem de tipo vira ×1,75 (em vez de ×1,5).' },
   m_canal: { id: 'm_canal', line: 'mago', tier: 1, cost: COST[1], name: 'Canalizar', icon: '⚡', desc: 'Carga vencedora causa 100% do dano (em vez de 50%).' },
   m_escudo: { id: 'm_escudo', line: 'mago', tier: 2, cost: COST[2], name: 'Escudo Arcano', icon: '🔷', desc: 'O primeiro golpe recebido em cada batalha causa só metade.' },
@@ -104,8 +104,9 @@ export const SKILLS: Record<SkillId, SkillDef> = {
     special: 'arcana',
   },
   m_tempestade: { id: 'm_tempestade', line: 'mago', tier: 3, cost: COST[3], name: 'Tempestade', icon: '🌩️', desc: 'O Especial pode ser usado 2 vezes por batalha.' },
-  c_passos: { id: 'c_passos', line: 'cacador', tier: 1, cost: COST[1], name: 'Passos Leves', icon: '👣', desc: 'Anda 25% mais rápido pelo mapa.' },
-  c_faro: { id: 'c_faro', line: 'cacador', tier: 1, cost: COST[1], name: 'Faro', icon: '👃', desc: 'Comer bichos dá +1 de Essência e cura 50% a mais. Frutas raras sempre no minimapa.' },
+  c_passos: { id: 'c_passos', line: 'cacador', tier: 1, cost: COST[1], name: 'Passos Leves', icon: '👣', desc: 'Anda 15% mais rápido pelo mapa.' },
+  // Faro se paga com o tempo: custa mais que as outras do nível 1.
+  c_faro: { id: 'c_faro', line: 'cacador', tier: 1, cost: 14, name: 'Faro', icon: '👃', desc: 'Comer bichos dá +1 de Essência e cura 50% a mais. Frutas raras sempre no minimapa.' },
   c_esquiva: { id: 'c_esquiva', line: 'cacador', tier: 2, cost: COST[2], name: 'Esquiva', icon: '💨', desc: 'O primeiro turno perdido em cada batalha não causa dano.' },
   c_armadilha: {
     id: 'c_armadilha',
@@ -114,7 +115,7 @@ export const SKILLS: Record<SkillId, SkillDef> = {
     cost: COST[2],
     name: 'Armadilha',
     icon: '🪤',
-    desc: 'Especial: vence Ataque e Defesa com dano ×1,3. Perde para Carga.',
+    desc: 'Especial: vence Ataque e Defesa com dano ×1,4. Perde para Carga.',
     special: 'armadilha',
   },
   c_rastro: { id: 'c_rastro', line: 'cacador', tier: 3, cost: COST[3], name: 'Rastro', icon: '🐾', desc: 'Cada bicho comido dá +1 de XP.' },
@@ -125,7 +126,7 @@ export const SKILL_IDS = Object.keys(SKILLS) as SkillId[];
 export const SPECIAL_INFO: Record<SpecialKind, { name: string; icon: string; beats: string; losesTo: string; mult: number }> = {
   brutal: { name: 'Golpe Brutal', icon: '💥', beats: 'vence Ataque e Carga', losesTo: 'defesa', mult: 1.6 },
   arcana: { name: 'Explosão Arcana', icon: '🔮', beats: 'vence Defesa e Carga', losesTo: 'ataque', mult: 1.4 },
-  armadilha: { name: 'Armadilha', icon: '🪤', beats: 'vence Ataque e Defesa', losesTo: 'carga', mult: 1.3 },
+  armadilha: { name: 'Armadilha', icon: '🪤', beats: 'vence Ataque e Defesa', losesTo: 'carga', mult: 1.4 },
 };
 
 export function isSkillId(v: unknown): v is SkillId {
@@ -184,15 +185,15 @@ export function lineCounts(skills: readonly SkillId[]): Record<Line, number> {
 export function modsOf(skills: readonly SkillId[]): SkillMods {
   const m: SkillMods = { ...NEUTRAL_MODS };
   const has = (id: SkillId) => skills.includes(id);
-  if (has('g_couro')) m.hpMult += 0.15;
-  if (has('g_pesado')) m.attackWinMult = 1.3;
+  if (has('g_couro')) m.hpMult += 0.2;
+  if (has('g_pesado')) m.attackWinMult = 1.4;
   if (has('g_contra')) m.counterMult = 2;
-  if (has('g_sede')) m.healOnWin = 0.1;
+  if (has('g_sede')) m.healOnWin = 0.08;
   if (has('m_foco')) m.typeStrong = 1.75;
   if (has('m_canal')) m.chargeWinMult = 2;
   if (has('m_escudo')) m.arcaneShield = true;
   if (has('m_tempestade')) m.specialUses = 2;
-  if (has('c_passos')) m.speedMult += 0.25;
+  if (has('c_passos')) m.speedMult += 0.15;
   if (has('c_faro')) {
     m.wildEssence += 1;
     m.wildHealMult = 1.5;
@@ -202,15 +203,15 @@ export function modsOf(skills: readonly SkillId[]): SkillMods {
   if (has('c_rastro')) m.wildXp += 1;
 
   const c = lineCounts(skills);
-  if (c.guerreiro >= 2) m.dmgMult += 0.05;
+  if (c.guerreiro >= 2) m.dmgMult += 0.1;
   if (c.guerreiro >= 4) {
     m.dmgMult += 0.1;
     m.hpMult += 0.1;
   }
   if (c.mago >= 2) m.chargedMult = 2.25;
   if (c.mago >= 4) m.startCharged = true;
-  if (c.cacador >= 2) m.speedMult += 0.15;
-  if (c.cacador >= 4) m.stealEssence = 3;
+  if (c.cacador >= 2) m.speedMult += 0.1;
+  if (c.cacador >= 4) m.stealEssence = 2;
   return m;
 }
 
@@ -266,9 +267,9 @@ export function withSkill(skills: readonly SkillId[], id: SkillId): SkillId[] {
 
 /**
  * Força: decide quem vai ao Duelo Final e ordena o ranking.
- * Estágio pesa mais; troféus, build e Essência desempatam de verdade.
+ * Estágio pesa mais; troféus, build (custo das habilidades) e Essência (meio ponto cada) desempatam de verdade.
  */
 export function powerOf(p: { stage: Stage; trophies: number; skills: readonly SkillId[]; essence: number; hpPct: number }): number {
   const skillValue = p.skills.reduce((s, id) => s + SKILLS[id].cost, 0);
-  return Math.round(p.stage * 100 + p.trophies * 30 + skillValue * 3 + p.essence + Math.max(0, Math.min(1, p.hpPct)) * 10);
+  return Math.round(p.stage * 100 + p.trophies * 30 + skillValue + p.essence * 0.5 + Math.max(0, Math.min(1, p.hpPct)) * 10);
 }
