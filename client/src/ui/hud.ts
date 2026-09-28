@@ -244,7 +244,8 @@ export class Hud {
   update(s: Snap): void {
     const me = s.me;
     const mine = this.myFx(s);
-    if (s.ph !== this.lastPhase) {
+    // O selo da Coleta espera os ovos chocarem, para não cobrir a eclosão.
+    if (s.ph !== this.lastPhase && !(s.ph === 'coleta' && s.el < BALANCE.respawn.hatchMs + 400)) {
       this.lastPhase = s.ph;
       this.seal.show(s.ph);
     }
