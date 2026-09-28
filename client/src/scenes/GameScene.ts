@@ -4,19 +4,26 @@ import { ZoneFx } from '../render/ambient';
 import { Arenas } from '../render/arena';
 import { Auras } from '../render/auras';
 import { Biome } from '../render/biome';
-import { drawCreature, lookKey } from '../render/creature';
+import { Builds } from '../render/builds';
+import { drawCreature, drawEgg, lookKey } from '../render/creature';
 import { Critters } from '../render/critters';
 import { Fruits } from '../render/fruits';
 import { Fx, pop, stepView, type EntView, type FxHost } from '../render/fx';
 import { FXC } from '../render/fxpalette';
+import { Hatch } from '../render/hatch';
 import { Light } from '../render/light';
 import { TILE, renderMap } from '../render/map';
 import { Runes } from '../render/runes';
+import { Specials } from '../render/specials';
 import { Spells } from '../render/spells';
 import { Tap } from '../render/tap';
 
 const center = (t: number) => t * TILE + TILE / 2;
-const byYDesc = (a: Phaser.GameObjects.Text, b: Phaser.GameObjects.Text) => b.y - a.y;
+const byLabelYDesc = (a: EntView, b: EntView) => b.label!.y - a.label!.y;
+/** Altura do nome acima do centro: mais baixo no ovo e no bebê, que são menores. */
+const labelLift = (v: EntView) => (v.egg ? 10 : v.data.s === 0 ? 9 : 13);
+/** Largura do distintivo mais 1 px de folga até o nome (0 sem distintivo). */
+const badgeRoom = (v: EntView) => (v.badge ? v.badge.width + 1 : 0);
 const CO = Phaser.Math.Easing.Cubic.Out;
 
 export class GameScene extends Phaser.Scene implements FxHost {
@@ -46,6 +53,9 @@ export class GameScene extends Phaser.Scene implements FxHost {
   private biome!: Biome;
   private fruits!: Fruits;
   private tap!: Tap;
+  private hatch!: Hatch;
+  private builds!: Builds;
+  private specials!: Specials;
   private duelists: (EntView | null)[] = [null, null];
   private decor: number[] = [];
   private snap: Snap | null = null;
@@ -69,7 +79,7 @@ export class GameScene extends Phaser.Scene implements FxHost {
   private insetPx = 0;
   private focusOff = 0;
   // separateLabels sem alocar
-  private labs: Phaser.GameObjects.Text[] = [];
+  private labs: EntView[] = [];
   private placedX: number[] = [];
   private placedY: number[] = [];
   private placedW: number[] = [];
@@ -96,6 +106,9 @@ export class GameScene extends Phaser.Scene implements FxHost {
     this.biome = new Biome(this, this);
     this.fruits = new Fruits(this, this);
     this.tap = new Tap(this);
+    this.hatch = new Hatch(this, this);
+    this.builds = new Builds(this, this);
+    this.specials = new Specials(this, this);
     this.applyZoom();
     this.light = new Light(this, this);
     this.scale.on('resize', () => {
@@ -189,10 +202,19 @@ export class GameScene extends Phaser.Scene implements FxHost {
     return this.zw;
   }
 
-  texFor(e: Pick<EntSnap, 'f' | 's' | 'o'>): string {
+  texFor(e: Pick<EntSnap, 'f' | 's' | 'o'> & Partial<Pick<EntSnap, 'id' | 'hx'>>): string {
+    // Chocando é sempre o ovo: o bebê nunca aparece antes da eclosão.
+    if (e.hx) return this.eggTex(e, 0, 0);
     const look = { form: e.f, stage: e.s, order: e.o };
     const key = `cr:${lookKey(look)}`;
     if (!this.textures.exists(key)) this.textures.addCanvas(key, drawCreature(look));
+    return key;
+  }
+
+  eggTex(e: Pick<EntSnap, 'f' | 's' | 'o'> & Partial<Pick<EntSnap, 'id'>>, crack: number, tilt: number): string {
+    const variant = (e.id ?? 0) & 3;
+    const key = `egg:${e.f}-${e.o.join('')}-${crack}-${tilt}-${variant}`;
+    if (!this.textures.exists(key)) this.textures.addCanvas(key, drawEgg({ form: e.f, stage: e.s, order: e.o }, { crack, tilt, variant }));
     return key;
   }
 
@@ -215,8 +237,8 @@ export class GameScene extends Phaser.Scene implements FxHost {
     }
     const now = this.time.now;
     if (best) {
-      // Jogador durante a Coleta é alvo inválido.
-      this.tap.creature(best, s.ph === 'coleta' && best.data.k === 'p', now);
+      // Jogador durante a Coleta e ovo chocando são alvos inválidos.
+      this.tap.creature(best, (s.ph === 'coleta' && best.data.k === 'p') || !!best.data.hx, now);
       this.onTap(null, best.data.id);
       return;
     }
@@ -269,6 +291,9 @@ export class GameScene extends Phaser.Scene implements FxHost {
     this.biome.clear();
     this.fruits.clear();
     this.tap.clear();
+    this.hatch.clear();
+    this.builds.clear();
+    this.specials.clear();
     this.light.reset();
     this.fx.killAll();
     this.zone.reset();
@@ -281,6 +306,7 @@ export class GameScene extends Phaser.Scene implements FxHost {
   private destroyView(v: EntView): void {
     v.img.destroy();
     v.label?.destroy();
+    v.badge?.destroy();
   }
 
   private newView(e: EntSnap, key: string, res: number): EntView {
@@ -372,6 +398,15 @@ export class GameScene extends Phaser.Scene implements FxHost {
       dieAt: 0,
       fadeMs: 0,
       hidden: false,
+      egg: false,
+      eggT0: 0,
+      eggVar: 0,
+      eggCrack: 0,
+      eggIntro: false,
+      eggAcc: 0,
+      eggHold: 0,
+      badge: null,
+      badgeKey: '',
     };
   }
 
@@ -389,7 +424,7 @@ export class GameScene extends Phaser.Scene implements FxHost {
 
     // (1) Eventos, com as EntViews ainda vivas.
     this.marked.clear();
-    if (s.fx) for (const ev of s.fx) this.onFx(ev, now, skipDiff);
+    if (s.fx) for (const ev of s.fx) this.onFx(ev, s, now, skipDiff);
     this.arenas.onSnap(s, now);
 
     // (2) Entidades e diffs.
@@ -404,13 +439,17 @@ export class GameScene extends Phaser.Scene implements FxHost {
       if (!v) {
         v = this.newView(e, key, res);
         this.ents.set(e.id, v);
-        // Selvagem de portal sobe do chão; o resto entra com fade de 200 ms.
-        if (skipDiff || !this.critters.intro(v, now)) this.tweens.add({ targets: v, alpha: 1, duration: 200 });
-      } else if (v.key !== key && v.texSwapAt === 0) {
-        // Sem evento (ou já liberada): troca direto, com o pop que já existia.
-        v.key = key;
-        v.img.setTexture(key);
-        if (!skipDiff) pop(v, 1.5, 350, now);
+        // Ovo do renascimento surge no brilho; selvagem de portal sobe do chão; o resto entra com fade de 200 ms.
+        if (!this.hatch.enter(v, now) && (skipDiff || !this.critters.intro(v, now))) this.tweens.add({ targets: v, alpha: 1, duration: 200 });
+      } else {
+        this.hatch.diff(v, e, now);
+        // Chocando, o ovo cuida da textura (rachaduras e balanço) até a eclosão.
+        if (!v.egg && v.key !== key && v.texSwapAt === 0) {
+          // Sem evento (ou já liberada): troca direto, com o pop que já existia.
+          v.key = key;
+          v.img.setTexture(key);
+          if (!skipDiff) pop(v, 1.5, 350, now);
+        }
       }
       this.auras.diff(v, e, now, skipDiff);
       const fx0 = v.px;
@@ -425,6 +464,7 @@ export class GameScene extends Phaser.Scene implements FxHost {
       v.ps = e.s;
       v.data = e;
       if (moved) this.critters.step(v, fx0, fy0, now, focus);
+      this.builds.badge(v);
       if (v.label) {
         const txt = `${e.cr ? '👑 ' : ''}${e.n ?? ''}`;
         if (v.label.text !== txt) v.label.setText(txt);
@@ -453,13 +493,14 @@ export class GameScene extends Phaser.Scene implements FxHost {
     this.auras.onSnap(s, now, skipDiff);
   }
 
-  private onFx(ev: FxEvent, now: number, skip: boolean): void {
+  private onFx(ev: FxEvent, s: Snap, now: number, skip: boolean): void {
     switch (ev.k) {
       case 'bt':
         if (!skip) this.arenas.open(ev, now);
         return;
       case 'h': {
         this.spells.hit(ev, now);
+        if (ev.sp) this.specials.cast(ev, now);
         this.arenas.hit(ev.bt, ev.a, now);
         const a = this.ents.get(ev.a);
         if (a && ev.fl & FX_CHARGED) this.auras.chargedHit(a);
@@ -490,8 +531,22 @@ export class GameScene extends Phaser.Scene implements FxHost {
         const v = this.ents.get(ev.id);
         if (v) v.koUntil = 0;
         this.runes.eliminate(ev, v, now);
+        if (v) {
+          // Sai do mundo já: se o id renascer (mesmo neste snapshot), vem numa EntView nova, como ovo.
+          this.ents.delete(ev.id);
+          this.auras.drop(v);
+          v.badge?.setVisible(false);
+          this.dying.push(v);
+        }
         return;
       }
+      case 'r':
+        this.hatch.born(ev, s.ents.find((e) => e.id === ev.id), now);
+        if (ev.id === this.meId()) this.runes.reviveGray(now);
+        return;
+      case 'k':
+        this.builds.buy(ev, now);
+        return;
       case 'c':
         this.marked.add(ev.w);
         this.critters.eat(ev, now);
@@ -531,9 +586,13 @@ export class GameScene extends Phaser.Scene implements FxHost {
         v.y += (center(e.y) - v.y) * k;
       }
       this.critters.animate(v, now, frozen);
-      if (v.texSwapAt > 0 && now >= v.texSwapAt) this.swapTexture(v, now);
+      if (v.egg) this.hatch.view(v, now, delta);
+      else if (v.texSwapAt > 0 && now >= v.texSwapAt) this.swapTexture(v, now);
       this.place(v, now, frozen);
-      v.label?.setPosition(v.x, v.y - 13);
+      if (v.label) {
+        // O nome desliza para a direita para caber o distintivo à esquerda (o conjunto fica centrado).
+        v.label.setPosition(v.x + badgeRoom(v) / 2, v.y - labelLift(v)).setVisible(!v.eggIntro);
+      }
       v.burning = false;
       if (s.ph !== 'duelo' && Math.hypot(e.x - s.z.x, e.y - s.z.y) >= s.z.r) this.zone.burn(v, now, delta, e.id === focus);
       else v.burnT = v.burnFlashT = 0;
@@ -553,6 +612,7 @@ export class GameScene extends Phaser.Scene implements FxHost {
       }
       this.place(v, now, false);
       if (v.label) v.label.setAlpha(v.img.alpha);
+      v.badge?.setAlpha(v.img.alpha);
     }
     this.separateLabels();
     this.updateCamera(s, now, delta);
@@ -560,6 +620,9 @@ export class GameScene extends Phaser.Scene implements FxHost {
     this.tap.update(s, now);
     this.arenas.update(now, delta);
     this.spells.update(now, delta);
+    this.specials.update(now, delta);
+    this.hatch.update(now);
+    this.builds.update(now);
     this.runes.update(now, delta);
     this.auras.update(s, now, delta);
     this.drawOverlay(now, delta);
@@ -597,7 +660,7 @@ export class GameScene extends Phaser.Scene implements FxHost {
       const l = v.label;
       if (l?.visible && l.text) {
         const hw = l.width / 2;
-        out[n * 4] = l.x - hw;
+        out[n * 4] = l.x - hw - badgeRoom(v);
         out[n * 4 + 1] = l.y - l.height;
         out[n * 4 + 2] = l.x + hw;
         out[n * 4 + 3] = l.y;
@@ -614,23 +677,28 @@ export class GameScene extends Phaser.Scene implements FxHost {
     return n;
   }
 
-  /** Empurra para cima os nomes que se sobrepõem (bichos colados numa batalha, por exemplo). */
+  /** Empurra para cima os nomes que se sobrepõem (bichos colados numa batalha, por exemplo) e assenta os distintivos. */
   private separateLabels(): void {
     const labs = this.labs;
     labs.length = 0;
-    for (const v of this.ents.values()) if (v.label) labs.push(v.label);
-    labs.sort(byYDesc);
+    for (const v of this.ents.values()) if (v.label) labs.push(v);
+    labs.sort(byLabelYDesc);
     const px = this.placedX;
     const py = this.placedY;
     const pw = this.placedW;
+    const now = this.time.now;
     let n = 0;
-    for (const l of labs) {
-      const w = l.width / 2 + 2;
+    for (const v of labs) {
+      const l = v.label!;
+      const room = badgeRoom(v);
+      // Centro e meia-largura do conjunto distintivo + nome
+      const cx = l.x - room / 2;
+      const w = l.width / 2 + room / 2 + 2;
       let y = l.y;
       for (let guard = 0; guard < 8; guard++) {
         let hit = -1;
         for (let j = 0; j < n; j++) {
-          if (Math.abs(px[j] - l.x) < pw[j] + w && Math.abs(py[j] - y) < 8) {
+          if (Math.abs(px[j] - cx) < pw[j] + w && Math.abs(py[j] - y) < 8) {
             hit = j;
             break;
           }
@@ -639,10 +707,15 @@ export class GameScene extends Phaser.Scene implements FxHost {
         y = py[hit] - 8;
       }
       l.setY(y);
-      px[n] = l.x;
+      px[n] = cx;
       py[n] = y;
       pw[n] = w;
       n++;
+      const b = v.badge;
+      if (b) {
+        b.setPosition(Math.round(cx - w + 2), Math.round(y - l.height / 2)).setVisible(l.visible && !!l.text && !v.hidden);
+        this.builds.shine(v, now);
+      }
     }
   }
 
@@ -721,7 +794,7 @@ export class GameScene extends Phaser.Scene implements FxHost {
       }
       if (v.ghostHp > v.shownHp && now >= v.ghostHoldUntil) v.ghostHp = Math.max(v.shownHp, v.ghostHp - (mhp * delta) / 450);
       if (v.ghostHp < v.shownHp) v.ghostHp = v.shownHp;
-      const showBar = e.k === 'p' || v.shownHp < mhp || v.ghostHp > v.shownHp || e.b !== undefined;
+      const showBar = !v.egg && (e.k === 'p' || v.shownHp < mhp || v.ghostHp > v.shownHp || e.b !== undefined);
       v.barOn = showBar && this.fx.view.contains(v.x, v.y);
       if (!v.barOn) continue;
       this.overBudget += 4;

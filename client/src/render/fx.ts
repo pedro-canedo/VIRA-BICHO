@@ -116,6 +116,19 @@ export interface EntView {
   dieAt: number;
   fadeMs: number;
   hidden: boolean;
+  // Eclosão: enquanto egg, a textura é a do ovo (rachaduras e balanço)
+  egg: boolean;
+  eggT0: number;
+  eggVar: number;
+  eggCrack: number;
+  /** o ovo ainda vai surgir no brilho do renascimento (invisível até lá) */
+  eggIntro: boolean;
+  eggAcc: number;
+  /** sem hx (só o 'r'): choca pelo relógio local até este instante */
+  eggHold: number;
+  // Distintivo da build ao lado do nome
+  badge: Phaser.GameObjects.Image | null;
+  badgeKey: string;
 }
 
 /** Partícula com rampa de cor, escala inteira, troca de frame e moveTo próprios (sem alocar). */
@@ -782,7 +795,10 @@ export interface FxHost {
   panelBattle(): number | null;
   addTrauma(v: number): void;
   punch(amt: number, inMs: number, outMs: number): void;
-  texFor(e: Pick<EntSnap, 'f' | 's' | 'o'>): string;
+  /** Textura do bicho (ou do ovo, se hx). */
+  texFor(e: Pick<EntSnap, 'f' | 's' | 'o'> & Partial<Pick<EntSnap, 'id' | 'hx'>>): string;
+  /** Textura do ovo da eclosão (rachadura 0-3, inclinação -1/0/1). */
+  eggTex(e: Pick<EntSnap, 'f' | 's' | 'o'> & Partial<Pick<EntSnap, 'id'>>, crack: number, tilt: number): string;
   /** centro e raio da zona em px de mundo */
   zoneWorld(): { x: number; y: number; r: number };
   /** contador de fillRect do groundG neste frame (teto 220) */

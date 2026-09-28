@@ -129,6 +129,7 @@ export const DMG_FONTS: Record<string, string> = {
   l: '#aa9fcc',
   g: '#58e07a',
   m: '#ff5fd2',
+  a: '#b98cff',
   brasa: '#ff7a3d',
   mare: '#4aa3ff',
   broto: '#52c95f',
