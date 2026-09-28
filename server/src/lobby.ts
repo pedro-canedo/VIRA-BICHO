@@ -1,4 +1,4 @@
-import { ACTIONS, BALANCE, type Action, type ClientMsg } from '@vb/shared';
+import { ACTIONS, BALANCE, isSkillId, type Action, type ClientMsg, type GameMode } from '@vb/shared';
 import type { Conn } from './entities';
 import { Room, type Member } from './room';
 import type { Player } from './entities';
@@ -77,7 +77,7 @@ export class Lobby {
   }
 
   /** Cria uma sala respeitando os limites; responde o erro e devolve null se não der. */
-  private createRoom(conn: Conn, key: string, isPrivate: boolean, now: number): Room | null {
+  private createRoom(conn: Conn, key: string, isPrivate: boolean, now: number, gm: GameMode): Room | null {
     const exempt = this.isExempt(key);
     if (!exempt) {
       const cap = isPrivate ? this.limits.maxRoomsPerIp : this.limits.maxQuickRoomsPerIp;
@@ -104,7 +104,7 @@ export class Lobby {
       this.deny(conn, 'lobby_create_rate', key, MSG.createRate);
       return null;
     }
-    const room = new Room(this.newCode(), isPrivate, undefined, { targetSlackTiles: this.game.targetSlackTiles });
+    const room = new Room(this.newCode(), isPrivate, undefined, { targetSlackTiles: this.game.targetSlackTiles, gm });
     room.hooks = this.hooks;
     this.hooks?.roomCreated(room, now);
     this.rooms.set(room.code, room);
@@ -137,6 +137,8 @@ export class Lobby {
           if (!b.take(now)) return this.deny(conn, 'lobby_hello_rate', key, MSG.helloRate);
         }
         const name = sanitizeName(msg.name);
+        // Modo pedido (padrão: rápido). Quem entra por código joga no modo de quem criou a sala.
+        const gm: GameMode = msg.gm ?? 'rapido';
         let room: Room | null | undefined;
         if (msg.mode === 'join') {
           if (!exempt && this.failedJoins.count(key, now) >= this.limits.failedJoin.max) return this.deny(conn, 'lobby_join_bruteforce', key, MSG.joinBrute);
@@ -152,10 +154,11 @@ export class Lobby {
           if (room.state !== 'lobby') return conn.send({ t: 'error', msg: 'Essa partida já começou.' });
           if (room.humans >= BALANCE.lobby.maxPlayers) return conn.send({ t: 'error', msg: 'Sala cheia.' });
         } else if (msg.mode === 'create') {
-          room = this.createRoom(conn, key, true, now);
+          room = this.createRoom(conn, key, true, now, gm);
         } else {
-          room = [...this.rooms.values()].find((r) => !r.isPrivate && r.state === 'lobby' && r.humans < BALANCE.lobby.maxPlayers);
-          room ??= this.createRoom(conn, key, false, now);
+          // Partida rápida: uma fila por modo.
+          room = [...this.rooms.values()].find((r) => !r.isPrivate && r.state === 'lobby' && r.gm === gm && r.humans < BALANCE.lobby.maxPlayers);
+          room ??= this.createRoom(conn, key, false, now, gm);
         }
         if (!room) return; // createRoom já respondeu o motivo
         const member: Member = { conn, name, player: null };
@@ -182,6 +185,9 @@ export class Lobby {
         return;
       case 'act':
         if (ACTIONS.includes(msg.a as Action)) cur.room.act(p, msg.a);
+        return;
+      case 'buy':
+        if (isSkillId(msg.s)) cur.room.buy(p, msg.s);
         return;
     }
   }

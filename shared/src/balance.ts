@@ -109,14 +109,14 @@ export const BALANCE = {
 
   /** Essência: moeda da loja de habilidades. */
   essence: {
-    start: 2,
-    wild: 1,
-    fruit: 2,
-    pvpWin: 3,
+    start: 3,
+    wild: 2,
+    fruit: 4,
+    pvpWin: 5,
     /** Bônus extra por derrubar quem está com a Coroa. */
-    crown: 3,
+    crown: 5,
     /** Por mandar alguém de volta ao ovo. */
-    kill: 2,
+    kill: 3,
   },
 
   /** Ninguém é eliminado: quem morre renasce do ovo, perdendo parte do que juntou. */

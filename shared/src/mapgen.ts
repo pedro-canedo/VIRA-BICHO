@@ -110,10 +110,11 @@ export function floodFill(m: GameMap, x: number, y: number): Uint8Array {
 /**
  * Gera o mapa: biomas por Voronoi com bordas deformadas por ruído, blocos de pedra,
  * garantia de conectividade, frutas raras no coração de cada bioma e nascimentos em anel.
+ * `sizeOverride` troca o lado do mapa (modos com arena maior); sem ele vale mapSizeFor.
  */
-export function generateMap(seed: number, players: number): GameMap {
+export function generateMap(seed: number, players: number, sizeOverride?: number): GameMap {
   const rng = new Rng(seed);
-  const size = mapSizeFor(players);
+  const size = sizeOverride !== undefined ? Math.max(24, Math.min(128, Math.round(sizeOverride))) : mapSizeFor(players);
   const w = size;
   const h = size;
   const tiles = new Uint8Array(w * h);
@@ -121,8 +122,8 @@ export function generateMap(seed: number, players: number): GameMap {
   const cx = (w - 1) / 2;
   const cy = (h - 1) / 2;
 
-  // Sementes do Voronoi: 2 regiões por tipo (48×48) ou 3 (64×64).
-  const perElem = size >= 64 ? 3 : 2;
+  // Sementes do Voronoi: 2 regiões por tipo (48×48), 3 (64×64) ou 4 (arenas enormes).
+  const perElem = size >= 88 ? 4 : size >= 64 ? 3 : 2;
   const elems = rng.shuffle(ELEMS.flatMap((e) => Array<Elem>(perElem).fill(e)));
   const minDist = size / (Math.sqrt(elems.length) + 0.8);
   const seeds: (Vec & { elem: Elem })[] = [];

@@ -54,19 +54,20 @@ export type ObsEventValue = string | number | boolean | null;
 
 /**
  * Campos de cada tipo de evento (documentação; no fio o data é um Record genérico):
- * - join: { name, mode, room, country, device }
+ * - join: { name, mode, room, country, device, gm? }
  * - leave: { name, room, reason, inMatch }
- * - match_start: { room, humans, bots, players }
- * - match_end: { room, winner, form, durationMs, humans }
+ * - match_start: { room, humans, bots, players, gm? }
+ * - match_end: { room, winner, form, durationMs, humans, gm? }
+ * gm = modo de jogo da sala (rapido, classico, avancado); opcional para aceitar jogos antigos.
  * - duel: { room, a, b }
  * - security: { kind, ipHash, detail }
  * - error: { message }
  */
 export interface ObsEventDataMap {
-  join: { name: string; mode: string; room: string; country: string; device: ObsDevice };
+  join: { name: string; mode: string; room: string; country: string; device: ObsDevice; gm?: string };
   leave: { name: string; room: string; reason: string; inMatch: boolean };
-  match_start: { room: string; humans: number; bots: number; players: number };
-  match_end: { room: string; winner: string | null; form: string | null; durationMs: number; humans: number };
+  match_start: { room: string; humans: number; bots: number; players: number; gm?: string };
+  match_end: { room: string; winner: string | null; form: string | null; durationMs: number; humans: number; gm?: string };
   duel: { room: string; a: string; b: string };
   security: { kind: string; ipHash: string; detail: string };
   error: { message: string };
