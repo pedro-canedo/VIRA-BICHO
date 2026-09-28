@@ -1,23 +1,30 @@
-import { BALANCE, ELEMS, FORM_LABEL, STAGE_LABEL, speciesName, type Elem, type FxEvent, type Fruit, type Phase, type SelfSnap, type Snap, type TypePoints } from '@vb/shared';
+import { BALANCE, ELEMS, FORM_LABEL, LINE_INFO, levelOf, MODES, STAGE_LABEL, speciesName, type Elem, type FxEvent, type Fruit, type GameMode, type Phase, type SelfSnap, type SkillId, type Snap, type TypePoints } from '@vb/shared';
 import { creatureImg, lookKey } from '../render/creature';
 import { renderMinimap } from '../render/map';
 import { ELEM_TONE, FORM_COLOR } from '../render/palette';
 import { Anims, countTo, GhostBar, later, play, reduced, typeText } from './anim';
+import { skillIcons, titleBadge } from './build';
 import { fmtTime, h, mount } from './dom';
 import { burst, RAMP } from './fxcanvas';
 import { PHASE_LOOK, PhaseSeal } from './phase';
+import { buyableCount, Shop } from './shop';
 
-const SHORT_STAGE = ['Ovo', 'Filhote', 'Adulto', 'Final'] as const;
 const ELEM_ICON: Record<Elem, string> = { brasa: '🔥', mare: '🌊', broto: '🌿' };
 const FEED_ICON: Record<string, string> = { steal: '⚔', elim: '💀', evo: '✨', phase: '⏳', info: '📢' };
 const FEED_COLOR: Record<string, string> = { steal: '#ffcf3f', elim: '#ff5fd2', evo: '#58e07a', info: '#aa9fcc' };
 const NO_FX: FxEvent[] = [];
 
-const PHASE_INFO: Record<string, { label: string; next: string; at: number }> = {
-  coleta: { label: 'COLETA', next: 'Caçada em', at: BALANCE.phases.coletaEnd },
-  cacada: { label: 'CAÇADA', next: 'Final em', at: BALANCE.phases.cacadaEnd },
-  final: { label: 'FINAL', next: 'Duelo Final em', at: BALANCE.phases.finalEnd },
-};
+type PhaseInfo = Record<string, { label: string; next: string; at: number }>;
+
+/** Relógio das fases pelo modo da partida (vem no 'start'). */
+function phaseInfo(gm: GameMode): PhaseInfo {
+  const p = MODES[gm].phases;
+  return {
+    coleta: { label: 'COLETA', next: 'Caçada em', at: p.coletaEnd },
+    cacada: { label: 'CAÇADA', next: 'Final em', at: p.cacadaEnd },
+    final: { label: 'FINAL', next: 'Duelo em', at: p.finalEnd },
+  };
+}
 
 /** Troca o texto só quando muda (não reinicia animações nem gera lixo à toa). */
 function setText(el: HTMLElement, v: string): void {
@@ -28,11 +35,18 @@ function toggle(el: HTMLElement, cls: string, on: boolean): void {
   if (el.classList.contains(cls) !== on) el.classList.toggle(cls, on);
 }
 
+/** Pulinho de destaque (sem movimento com reduced-motion: só um lampejo). */
+function stampPop(el: HTMLElement, fx: Anims): void {
+  if (reduced()) play(el, [{ opacity: 0.4 }, { opacity: 1 }], { duration: 200 }, fx);
+  else play(el, [{ scale: '1' }, { scale: '1.08' }, { scale: '1' }], { duration: 240, easing: 'steps(3)' }, fx);
+}
+
 interface BoardRow {
   el: HTMLElement;
   dot: HTMLElement;
   name: HTMLElement;
-  stage: HTMLElement;
+  line: HTMLElement;
+  pw: HTMLElement;
   key: string;
   id: number;
 }
@@ -93,16 +107,41 @@ export class Hud {
   private held = false;
   private latest: SelfSnap | null = null;
   private prev: { pts: TypePoints; xp: number; stage: number } | null = null;
-  private last = { phaseCls: '', alive: -1, hp: -1, mhp: -1, dead: false, xp: '', xpFrac: 0, ramp: '' };
+  private last = { phaseCls: '', alive: -1, hp: -1, mhp: -1, dead: false, xp: '', xpFrac: 0, ramp: '', ess: -1, pw: -1, deaths: -1, build: '\u0000', can: -1 };
+  private phases: PhaseInfo;
+  /** Título e ícones da build no cartão. */
+  private buildEl = h('div', { class: 'mebuild hidden' });
+  private powerEl = h('b');
+  private deathsEl = h('b');
+  private statsEl = h('div', { class: 'mestats' }, h('span', { title: 'Força: decide o placar e quem vai ao Duelo Final' }, '💪 ', this.powerEl), h('span', { title: 'Mortes' }, '💀 ', this.deathsEl));
+  private shop: Shop;
+  private essNum = h('b', { class: 'sbnum' }, '0');
+  private shopDot = h('i', { class: 'sbdot hidden', 'aria-hidden': 'true' }, '!');
+  private shopBtn: HTMLButtonElement;
+  private hatch = h('span', { class: 'st-hatch hidden' });
 
-  constructor() {
+  constructor(
+    private gm: GameMode,
+    onBuy: (id: SkillId) => void,
+  ) {
+    this.phases = phaseInfo(gm);
     for (const e of ELEMS) this.chips[e] = { el: h('span', { style: `background:${ELEM_TONE[e].body}` }), n: -1, key: '' };
     for (let i = 0; i < 10; i++) {
       const dot = h('span', { class: 'dot' });
-      const name = h('span');
-      const stage = h('span', { class: 'muted', style: 'margin-left:auto' });
-      this.rows.push({ el: h('div', { class: 'hidden' }, dot, name, stage), dot, name, stage, key: '', id: -1 });
+      const name = h('span', { class: 'bname' });
+      const line = h('span', { class: 'bline' });
+      const pw = h('span', { class: 'bpw' });
+      this.rows.push({ el: h('div', { class: 'hidden' }, dot, name, line, pw), dot, name, line, pw, key: '', id: -1 });
     }
+    this.shop = new Shop(gm, onBuy, (open) => this.shopBtn.classList.toggle('open', open));
+    // Botão fixo (montado uma vez): o contador de Essência mora nele
+    this.shopBtn = h(
+      'button',
+      { class: 'shopbtn', title: 'Loja de habilidades (L)', 'aria-label': 'Abrir a loja de habilidades', onclick: () => this.toggleShop() },
+      h('span', { class: 'sbic' }, '🛒'),
+      h('span', { class: 'sbtxt' }, h('span', { class: 'sbess' }, '✨ ', this.essNum), h('small', {}, 'Loja')),
+      this.shopDot,
+    ) as HTMLButtonElement;
     for (let i = 0; i < 5; i++) this.orbs.push(h('i', { class: 'orb' }));
     this.phaseEl.append(this.phaseLabel, this.clockEl);
     this.meEl.append(
@@ -111,7 +150,9 @@ export class Hud {
       this.hpText,
       h('div', { class: 'bars' }, this.hpBar.el, this.xpBar),
       h('div', { class: 'types' }, this.chips.brasa.el, this.chips.mare.el, this.chips.broto.el),
-      h('div', { class: 'status' }, this.st.crown, this.st.trophies, this.st.shield, this.st.hunger),
+      this.buildEl,
+      this.statsEl,
+      h('div', { class: 'status' }, this.hatch, this.st.crown, this.st.trophies, this.st.shield, this.st.hunger),
     );
     this.boardEl.append(...this.rows.map((r) => r.el));
     this.root = mount(
@@ -126,17 +167,43 @@ export class Hud {
         h('div', { class: 'side' }, this.mini, this.aliveEl, this.boardEl),
         this.feedEl,
         this.toastEl,
-        h('div', { class: 'hint' }, 'Toque no chão para andar · toque num bicho para batalhar'),
+        h('div', { class: 'hint' }, 'Toque no chão para andar · toque num bicho para batalhar · L abre a loja'),
+        this.shopBtn,
+        this.shop.el,
         this.seal.el,
         ...this.orbs,
       ),
     );
+    window.addEventListener('keydown', this.onKey);
   }
 
   destroy(): void {
     this.fx.cancel();
     this.seal.destroy();
+    this.shop.destroy();
+    window.removeEventListener('keydown', this.onKey);
     this.root.remove();
+  }
+
+  private onKey = (e: KeyboardEvent) => {
+    if (e.key.toLowerCase() !== 'l' || e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
+    if ((e.target as HTMLElement | null)?.tagName === 'INPUT') return;
+    this.toggleShop();
+  };
+
+  /** Abre ou fecha a loja; em batalha ou morto ela não abre. */
+  toggleShop(): void {
+    const me = this.latest;
+    if (!this.shop.opened && me && (me.battle !== null || !me.alive)) {
+      this.toast(me.alive ? 'A loja abre fora da batalha.' : 'A loja volta quando você renascer.');
+      return;
+    }
+    this.shop.toggle();
+  }
+
+  /** Fecha a loja (batalha começou, morreu). */
+  closeShop(): void {
+    this.shop.close();
   }
 
   setMap(w: number, hgt: number, tiles: Uint8Array, fruits: Fruit[]): void {
@@ -189,7 +256,7 @@ export class Hud {
       setText(this.clockEl, `${s.duel.a} × ${s.duel.b}`);
       this.clockTension(0);
     } else {
-      const info = PHASE_INFO[s.ph] ?? PHASE_INFO.final;
+      const info = this.phases[s.ph] ?? this.phases.final;
       setText(this.phaseLabel, outside ? '⚠ FORA DA ZONA' : info.label);
       setText(this.clockEl, `${info.next} ${fmtTime(info.at - s.el)}`);
       this.clockTension(s.ph === 'fim' ? 0 : info.at - s.el);
@@ -250,7 +317,8 @@ export class Hud {
   /** Ranking com linhas persistentes que deslizam para a posição nova (FLIP). */
   private updateBoard(s: Snap): void {
     const me = s.me;
-    const lb = s.lb.length > this.rows.length ? s.lb.slice(0, this.rows.length) : s.lb;
+    // Placar pela Força (o servidor já manda ordenado; a ordenação estável só garante)
+    const lb = [...s.lb].sort((a, b) => b.pw - a.pw).slice(0, this.rows.length);
     const ids = lb.map((r) => r.id).join(',');
     if (ids !== this.order) {
       this.order = ids;
@@ -289,13 +357,18 @@ export class Hud {
     for (const l of lb) {
       const row = this.rowOf.get(l.id)!;
       const isMe = l.id === me?.id;
-      const key = `${l.f}|${l.s}|${l.cr ?? 0}|${l.n}|${isMe ? 1 : 0}`;
+      const key = `${l.f}|${l.s}|${l.cr ?? 0}|${l.n}|${isMe ? 1 : 0}|${l.pw}|${l.ln ?? ''}${l.tl ?? ''}`;
       if (key === row.key) continue;
       row.key = key;
       row.el.className = `${isMe ? 'me-row' : ''}${l.cr ? ' crown-row' : ''}`;
+      row.el.title = `${l.n} · Nível ${levelOf(l.s)} · Força ${l.pw}`;
       row.dot.style.background = FORM_COLOR[l.f];
       row.name.textContent = `${l.cr ? '👑 ' : ''}${l.n}`;
-      row.stage.textContent = SHORT_STAGE[l.s];
+      const line = l.ln ? LINE_INFO[l.ln] : null;
+      row.line.textContent = line ? line.icon : '';
+      row.line.className = `bline${l.tl === 2 ? ' master' : ''}`;
+      if (line) row.line.style.setProperty('--lc', line.color);
+      row.pw.textContent = String(l.pw);
     }
     // Sua linha pisca dourada quando você sobe no ranking
     const rank = me ? lb.findIndex((l) => l.id === me.id) : -1;
@@ -315,7 +388,8 @@ export class Hud {
       this.lastStage = me.look.stage;
       this.creatureSlot.replaceChildren(creatureImg(me.look, 2));
       const name = speciesName(me.look.form, me.look.stage);
-      setText(this.speciesEl, `${FORM_LABEL[me.look.form]} · ${STAGE_LABEL[me.look.stage]}`);
+      setText(this.speciesEl, `${FORM_LABEL[me.look.form]} · Nv ${levelOf(me.look.stage)}`);
+      this.speciesEl.title = STAGE_LABEL[me.look.stage];
       this.meEl.style.setProperty('--fc', FORM_COLOR[me.look.form]);
       toggle(this.meEl, 'final', me.look.stage === 3);
       const ramp = RAMP[me.look.form];
@@ -332,7 +406,7 @@ export class Hud {
 
     const dead = !me.alive;
     if (dead) {
-      if (!this.last.dead) setText(this.hpText, 'Eliminado');
+      if (!this.last.dead) setText(this.hpText, '💀 Renascendo…');
     } else if (me.hp !== this.last.hp || me.mhp !== this.last.mhp || this.last.dead) {
       const from = this.last.hp < 0 || me.mhp !== this.last.mhp ? me.hp : this.last.hp;
       const mhp = me.mhp;
@@ -349,6 +423,10 @@ export class Hud {
     if (gain && !reduced() && !this.held) this.launchOrbs(me, gain);
     if (!this.held) this.applyXp(me, false);
 
+    this.updateBuild(me);
+
+    toggle(this.hatch, 'hidden', !(me.hatchMs > 0));
+    if (me.hatchMs > 0) setText(this.hatch, `🥚 Chocando ${Math.ceil(me.hatchMs / 1000)}s`);
     toggle(this.st.crown, 'hidden', !me.crown);
     toggle(this.st.trophies, 'hidden', !me.trophies);
     if (me.trophies) setText(this.st.trophies, `🏆×${me.trophies}`);
@@ -356,6 +434,62 @@ export class Hud {
     if (me.shieldMs > 0) setText(this.st.shield, `Escudo ${Math.ceil(me.shieldMs / 1000)}s`);
     toggle(this.st.hunger, 'hidden', !(me.hungerMs > 0));
     if (me.hungerMs > 0) setText(this.st.hunger, `Fome ${Math.ceil(me.hungerMs / 1000)}s`);
+  }
+
+  /** Essência (no botão da loja), Força, mortes, título e ícones da build. */
+  private updateBuild(me: SelfSnap): void {
+    const L = this.last;
+    if (me.essence !== L.ess) {
+      const old = L.ess;
+      L.ess = me.essence;
+      countTo(this.essNum, old < 0 ? me.essence : old, me.essence, 400);
+      if (old >= 0) this.essenceDelta(me.essence - old);
+    }
+    if (me.power !== L.pw) {
+      const old = L.pw;
+      L.pw = me.power;
+      countTo(this.powerEl, old < 0 ? me.power : old, me.power, 400);
+    }
+    if (me.deaths !== L.deaths) {
+      const old = L.deaths;
+      L.deaths = me.deaths;
+      this.deathsEl.textContent = String(me.deaths);
+      if (old >= 0 && me.deaths > old) play(this.deathsEl, [{ color: '#ff4f6d', scale: '1.4' }, { color: '#ff4f6d', scale: '1' }], { duration: 400, easing: 'steps(3)' }, this.fx);
+    }
+    const bk = me.skills.join(',');
+    if (bk !== L.build) {
+      const grew = L.build !== '\u0000' && me.skills.length > (L.build ? L.build.split(',').length : 0);
+      L.build = bk;
+      toggle(this.buildEl, 'hidden', me.skills.length === 0);
+      this.buildEl.replaceChildren(...[titleBadge(me.skills), skillIcons(me.skills)].filter((e): e is HTMLElement => !!e));
+      if (grew) stampPop(this.buildEl, this.fx);
+    }
+    this.shop.update(me);
+    const can = buyableCount(me, this.gm);
+    if (can !== L.can) {
+      L.can = can;
+      // Pulsa quando dá para comprar algo
+      toggle(this.shopBtn, 'can', can > 0);
+      toggle(this.shopDot, 'hidden', can === 0);
+      this.shopBtn.setAttribute('aria-label', can ? `Abrir a loja: ${can} ${can === 1 ? 'habilidade' : 'habilidades'} à venda` : 'Abrir a loja de habilidades');
+    }
+    toggle(this.shopBtn, 'off', me.battle !== null || !me.alive);
+  }
+
+  /** "+2 ✨" (ou "-3") saindo do botão da loja. */
+  private essenceDelta(d: number): void {
+    if (!d) return;
+    const el = h('b', { class: `sbfloat${d < 0 ? ' neg' : ''}` }, `${d > 0 ? '+' : ''}${d} ✨`);
+    this.shopBtn.append(el);
+    play(el, reduced() ? [{ opacity: 1 }, { opacity: 0 }] : [{ translate: '-50% 0', opacity: 1 }, { translate: '-50% -26px', opacity: 1, offset: 0.7 }, { translate: '-50% -32px', opacity: 0 }], { duration: 900, easing: 'steps(9)', fill: 'forwards' });
+    window.setTimeout(() => el.remove(), 950);
+    if (d > 0) {
+      play(this.shopBtn, [{ scale: '1' }, { scale: '1.12' }, { scale: '1' }], { duration: 240, easing: 'steps(3)' }, this.fx);
+      if (!reduced()) {
+        const r = this.essNum.getBoundingClientRect();
+        burst(r.left + r.width / 2, r.top, 6, ['#ffcf3f', '#ffffff', '#b98cff'], { angle: [-150, -30], speed: [50, 110], gravity: 300, life: [260, 380], step: true });
+      }
+    }
   }
 
   /** Ganho de XP ou de pontos desde o último snapshot (ou evento 'c' seu). */
