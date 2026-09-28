@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { FX_CHARGED, FX_CLASH, FX_IMPACT_MS, FX_KO, type Action, type Form, type FxEvent } from '@vb/shared';
+import { FX_CHARGED, FX_CLASH, FX_IMPACT_MS, FX_KO, type Action, type Form, type FxEvent, type SpecialKind } from '@vb/shared';
 import { PAT_HIT, flash, nudge, squash, type EntView, type FxHost } from './fx';
 import { ELEM_RAMP, FXC, PRISM, RAMP, bodyTint, prismAt, schoolOf, type School } from './fxpalette';
 import { TILE } from './map';
@@ -30,6 +30,8 @@ interface Slot {
   school: School;
   form: Form;
   act: Action;
+  /** Especial (o visual fica com Specials; aqui só o impacto, o HP e o número) */
+  sp: SpecialKind | null;
   m: -1 | 0 | 1;
   fl: number;
   v: number;
@@ -64,6 +66,7 @@ const newSlot = (): Slot => ({
   school: 'neutro',
   form: 'neutro',
   act: 'ataque',
+  sp: null,
   m: 0,
   fl: 0,
   v: 0,
@@ -128,6 +131,12 @@ export class Spells {
     for (const s of this.slots) if (s.on) this.release(s);
   }
 
+  /** EntView de quem luta; o ovo de quem já renasceu com o mesmo id não conta. */
+  private live(id: number): EntView | undefined {
+    const v = this.host.view(id);
+    return v && !v.egg ? v : undefined;
+  }
+
   /** Centro do corpo de uma EntView (ou do evento). */
   private pos(out: { x: number; y: number }, v: EntView | undefined, x: number, y: number): void {
     if (v) {
@@ -159,6 +168,7 @@ export class Spells {
     s.school = ad ? schoolOf(ad.f, ad.s, ad.o) : 'neutro';
     s.form = ad?.f ?? 'neutro';
     s.act = e.act;
+    s.sp = e.sp ?? null;
     s.m = e.m;
     s.fl = e.fl;
     s.v = e.v;
@@ -167,7 +177,7 @@ export class Spells {
     s.acc = 0;
     s.impacted = s.clashed = false;
     s.seed = Math.random() * 1000;
-    s.fly = !!av && !!dv && (mine || this.flying() < MAX_FLYING);
+    s.fly = !s.sp && !!av && !!dv && (mine || this.flying() < MAX_FLYING);
     // A barra mostra o HP antigo até o impacto.
     if (dv) dv.hpHoldUntil = now + FX_IMPACT_MS;
     if (!av || !dv) return;
@@ -246,8 +256,8 @@ export class Spells {
         }
         continue;
       }
-      const av = this.host.view(s.a);
-      const dv = this.host.view(s.d);
+      const av = this.live(s.a);
+      const dv = this.live(s.d);
       this.pos(A, av, s.ex, s.ey);
       this.pos(D, dv, s.ex, s.ey);
       if (s.fly) this.animate(s, el, now, delta);
@@ -330,7 +340,7 @@ export class Spells {
     if (s.school === 'neutro') {
       // Cabeçada: avança 6 px e volta.
       if (!s.clashed && el >= FX_IMPACT_MS - 90 && el - delta < FX_IMPACT_MS - 90) {
-        const av = this.host.view(s.a);
+        const av = this.live(s.a);
         if (av) nudge(av, Math.round(nx * 6), Math.round(ny * 6), 90, 90, now);
       }
       return;
@@ -498,12 +508,12 @@ export class Spells {
   private impact(s: Slot, now: number): void {
     const h = this.host;
     const fx = h.fx;
-    const av = h.view(s.a);
-    const dv = h.view(s.d);
+    const av = this.live(s.a);
+    const dv = this.live(s.d);
     const charged = (s.fl & FX_CHARGED) !== 0;
     const ko = (s.fl & FX_KO) !== 0;
     const mhp = dv?.data.mhp ?? 100;
-    const big = charged || s.m === 1 || s.v >= mhp * 0.25;
+    const big = charged || s.m === 1 || s.v >= mhp * 0.25 || s.sp !== null;
     const stop = ko ? 150 : big ? 100 : 60;
     // Direção do golpe (do atacante para o alvo)
     let nx = D.x - A.x;
@@ -532,6 +542,15 @@ export class Spells {
     const cy = D.y - ny * 5;
     // Estrela branca parada no ponto de contato
     let P = fx.reset();
+    if (s.sp) {
+      P.frame = 'star';
+      P.a1 = 1;
+      P.lifeMin = P.lifeMax = 120;
+      fx.emit(fx.spark, 1, cx, cy, s.mine, true);
+      this.camera(s, dv, ko, charged, mhp);
+      this.number(s, nx, charged, now);
+      return;
+    }
     P.frame = 'star';
     P.a1 = 1;
     P.lifeMin = P.lifeMax = 90;
@@ -637,7 +656,12 @@ export class Spells {
       P.lifeMin = P.lifeMax = 300;
       fx.emit(fx.spark, 8, cx, cy, s.mine);
     }
-    // Câmera
+    this.camera(s, dv, ko, charged, mhp);
+    this.number(s, nx, charged, now);
+  }
+
+  private camera(s: Slot, dv: EntView | undefined, ko: boolean, charged: boolean, mhp: number): void {
+    const h = this.host;
     const focus = h.focusId();
     if (dv) {
       const rel = Math.min(0.6, Math.max(0.15, (s.v / mhp) * 1.4));
@@ -655,25 +679,32 @@ export class Spells {
       if (ko && (s.d === focus || s.a === focus)) h.addTrauma(0.8);
     }
     if (charged && s.a === focus) h.addTrauma(0.15);
-    // Número (na sua batalha o painel mostra o número grande)
-    if (s.bt !== h.panelBattle()) {
-      let font = 'w';
-      let txt = `${Math.round(s.v)}`;
-      let sc = 1;
-      if (charged) {
-        font = 'c';
-        txt += 'x2';
-        sc = 2;
-      } else if (s.m === 1) {
-        font = s.school === 'brasa' || s.school === 'mare' || s.school === 'broto' ? s.school : 'y';
-        txt += '!';
-        sc = 2;
-      } else if (s.m === -1) {
-        font = 'l';
-        txt += '.';
-      }
-      fx.number(font, txt, D.x, D.y - 4, sc, nx >= 0 ? 1 : -1, s.d, now);
+  }
+
+  /** Número (na sua batalha o painel mostra o número grande); o Especial sai na cor da linha. */
+  private number(s: Slot, nx: number, charged: boolean, now: number): void {
+    const h = this.host;
+    if (s.bt === h.panelBattle()) return;
+    let font = 'w';
+    let txt = `${Math.round(s.v)}`;
+    let sc = 1;
+    if (s.sp) {
+      font = SP_FONT[s.sp];
+      txt += charged ? 'x2' : '!';
+      sc = 2;
+    } else if (charged) {
+      font = 'c';
+      txt += 'x2';
+      sc = 2;
+    } else if (s.m === 1) {
+      font = s.school === 'brasa' || s.school === 'mare' || s.school === 'broto' ? s.school : 'y';
+      txt += '!';
+      sc = 2;
+    } else if (s.m === -1) {
+      font = 'l';
+      txt += '.';
     }
+    h.fx.number(font, txt, D.x, D.y - 4, sc, nx >= 0 ? 1 : -1, s.d, now);
   }
 
   private furyImpact(s: Slot, now: number): void {
@@ -682,7 +713,7 @@ export class Spells {
     for (let side = 0; side < 2; side++) {
       const id = side ? s.d : s.a;
       const dmg = side ? s.vb : s.v;
-      const v = h.view(id);
+      const v = this.live(id);
       this.pos(A, v, s.ex, s.ey);
       const P = fx.reset();
       P.c0 = FXC.red;
@@ -715,4 +746,5 @@ export class Spells {
 }
 
 const MUD: readonly number[] = [FXC.mud, 0x17803a];
+const SP_FONT: Record<SpecialKind, string> = { brutal: 'r', arcana: 'a', armadilha: 'g' };
 const FURY_PAT = [100] as const;

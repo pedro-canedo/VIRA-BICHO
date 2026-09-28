@@ -798,6 +798,11 @@ export class Runes {
     }
   }
 
+  /** Você renasceu: o cinza da morte já começa a voltar à cor (600 ms). */
+  reviveGray(now: number): void {
+    if (this.gray && now - this.grayT0 < 2500) this.grayT0 = now - 2500;
+  }
+
   private removeGray(): void {
     if (!this.gray) return;
     this.scene.cameras.main.filters.internal.remove(this.gray);

@@ -32,3 +32,25 @@ export function clearBottom(x: number, hw: number, bottom: number, h: number, bo
   }
   return bottom;
 }
+
+// Balanço do ovo: [início, fim] em fração do tempo chocando e o passo (ms) de cada inclinação.
+const WOBBLE: readonly [number, number, number][] = [
+  [0.18, 0.26, 70],
+  [0.42, 0.52, 65],
+  [0.64, 0.76, 55],
+  [0.84, Infinity, 45],
+];
+const TILT: readonly (-1 | 0 | 1)[] = [-1, 0, 1, 0];
+
+/** Estágio da rachadura (0-3) pelo tempo chocando: cada rachadura vem logo depois de um balanço. */
+export function eggCrackAt(el: number, hatchMs: number): number {
+  const k = el / hatchMs;
+  return k < 0.28 ? 0 : k < 0.53 ? 1 : k < 0.77 ? 2 : 3;
+}
+
+/** Inclinação do ovo (-1, 0, 1) pelo tempo chocando: surtos cada vez mais rápidos, contínuo no fim. */
+export function eggTiltAt(el: number, hatchMs: number): -1 | 0 | 1 {
+  const k = el / hatchMs;
+  for (const [a, b, step] of WOBBLE) if (k >= a && k < b) return TILT[Math.floor(((k - a) * hatchMs) / step) % 4];
+  return 0;
+}
