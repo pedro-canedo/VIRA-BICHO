@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { decodeTiles, speciesName, type ServerMsg } from '@vb/shared';
+import { decodeTiles, speciesName, type ClientMsg, type ServerMsg } from '@vb/shared';
 import { lostMessage } from './closeReasons';
 import { Net } from './net';
 import { GameScene } from './scenes/GameScene';
@@ -7,9 +7,9 @@ import { BattleUi } from './ui/battle';
 import { BattleInset, applyInsetToDocument } from './ui/battleInset';
 import { recordLook } from './ui/bestiary';
 import { clearUi } from './ui/dom';
-import { showEliminated, showEnd } from './ui/end';
+import { showDeath, showEliminated, showEnd } from './ui/end';
 import { Hud } from './ui/hud';
-import { showLobby, showMenu, type PlayRequest } from './ui/screens';
+import { savedMode, showLobby, showMenu, type PlayRequest } from './ui/screens';
 import './style.css';
 
 type Screen = 'menu' | 'lobby' | 'game' | 'end';
@@ -48,15 +48,21 @@ let screen: Screen = 'menu';
 let hud: Hud | null = null;
 let battle: BattleUi | null = null;
 let deadEl: HTMLElement | null = null;
+/** Aviso de morte (renascendo) e o que espera o painel de batalha fechar para aparecer. */
+let deathEl: HTMLElement | null = null;
+let pendingDeath: (() => void) | null = null;
 let lastReq: PlayRequest | null = null;
 
 const net = new Net(onMsg, (code) => {
   if (screen === 'lobby' || screen === 'game') toMenu(lostMessage(code));
 });
 
+/** Tudo o que a interface manda passa por aqui (o ?uidemo troca por um servidor de mentira). */
+let send = (m: ClientMsg): void => net.send(m);
+
 scene.onTap = (tile, id) => {
-  if (id !== null) net.send({ t: 'target', id });
-  else if (tile) net.send({ t: 'move', x: tile.x, y: tile.y });
+  if (id !== null) send({ t: 'target', id });
+  else if (tile) send({ t: 'move', x: tile.x, y: tile.y });
 };
 
 function setScreen(s: Screen): void {
@@ -70,12 +76,15 @@ function cleanupGame(): void {
   hud?.destroy();
   hud = null;
   deadEl = null;
+  deathEl?.remove();
+  deathEl = null;
+  pendingDeath = null;
   battleInset.track(null);
   scene.clearWorld();
 }
 
 function toMenu(error = ''): void {
-  net.send({ t: 'leave' });
+  send({ t: 'leave' });
   cleanupGame();
   setScreen('menu');
   showMenu(play, error);
@@ -85,7 +94,7 @@ async function play(req: PlayRequest): Promise<void> {
   lastReq = req;
   try {
     await net.connect();
-    net.send({ t: 'hello', name: req.name, mode: req.mode, code: req.code });
+    send({ t: 'hello', name: req.name, mode: req.mode, code: req.code, gm: req.gm });
   } catch (err) {
     showMenu(play, (err as Error).message);
   }
@@ -96,14 +105,14 @@ function onMsg(msg: ServerMsg): void {
     case 'lobby':
       if (screen !== 'lobby') cleanupGame();
       setScreen('lobby');
-      showLobby(msg, { onStartNow: () => net.send({ t: 'startnow' }), onLeave: () => toMenu() });
+      showLobby(msg, { onStartNow: () => send({ t: 'startnow' }), onLeave: () => toMenu() });
       return;
     case 'start': {
       clearUi();
       cleanupGame();
       setScreen('game');
       const tiles = decodeTiles(msg.tiles);
-      hud = new Hud();
+      hud = new Hud(msg.gm ?? 'rapido', (s) => send({ t: 'buy', s }));
       hud.setMap(msg.w, msg.h, tiles, msg.fruits);
       scene.setWorld(msg.w, msg.h, tiles, msg.fruits);
       resetInput();
@@ -118,11 +127,14 @@ function onMsg(msg: ServerMsg): void {
       return;
     case 'b_start':
       battle?.destroy();
+      // A loja fecha sozinha quando começa uma batalha
+      hud?.closeShop();
+      pendingDeath = null;
       if (msg.spectate) {
         deadEl?.remove();
         deadEl = null;
       }
-      battle = new BattleUi(msg, (a) => net.send({ t: 'act', a }));
+      battle = new BattleUi(msg, (a) => send({ t: 'act', a }));
       // O mundo centraliza a luta na área visível acima do painel (e acompanha a altura dele).
       battleInset.track(battle.element);
       return;
@@ -140,7 +152,31 @@ function onMsg(msg: ServerMsg): void {
           battle = null;
           battleInset.track(null);
         }
+        // Morreu nesta batalha: o aviso aparece quando o painel sai
+        const show = pendingDeath;
+        pendingDeath = null;
+        show?.();
       });
+      return;
+    }
+    case 'death': {
+      // Morreu, mas a partida continua: renasce do ovo em respawnMs
+      hud?.closeShop();
+      const at = performance.now() + msg.respawnMs;
+      const show = () => {
+        deathEl?.remove();
+        deathEl = at - performance.now() > 300 ? showDeath(msg, at) : null;
+      };
+      if (!battle) show();
+      else {
+        pendingDeath = show;
+        // Se o painel não fechar (b_end perdido), o aviso aparece mesmo assim
+        window.setTimeout(() => {
+          if (pendingDeath !== show) return;
+          pendingDeath = null;
+          show();
+        }, 2500);
+      }
       return;
     }
     case 'feed':
@@ -150,6 +186,11 @@ function onMsg(msg: ServerMsg): void {
       hud?.toast(msg.text);
       return;
     case 'elim':
+      // Só o corte do Duelo Final tira alguém da partida
+      hud?.closeShop();
+      deathEl?.remove();
+      deathEl = null;
+      pendingDeath = null;
       battle?.destroy();
       battle = null;
       battleInset.track(null);
@@ -162,7 +203,7 @@ function onMsg(msg: ServerMsg): void {
       setScreen('end');
       showEnd(
         msg,
-        () => play({ mode: 'quick', name: lastReq?.name ?? 'Bichinho' }),
+        () => play({ mode: 'quick', name: lastReq?.name ?? 'Bichinho', gm: lastReq?.gm ?? savedMode() }),
         () => toMenu(),
       );
       return;
@@ -175,9 +216,12 @@ function onMsg(msg: ServerMsg): void {
   }
 }
 
-// ?fxdemo: demonstração dos efeitos, sem servidor (só desenvolvimento).
-const demo = new URLSearchParams(location.search).get('fxdemo');
+// ?fxdemo: demonstração dos efeitos; ?uidemo: telas da interface com mensagens sintéticas (sem servidor, só desenvolvimento).
+const params = new URLSearchParams(location.search);
+const demo = params.get('fxdemo');
+const uidemo = params.get('uidemo');
 if (demo !== null) void import('./fxdemo').then((m) => m.runFxDemo({ onMsg, scene, name: demo }));
+else if (uidemo !== null) void import('./ui/uidemo').then((m) => m.runUiDemo({ onMsg, name: uidemo, setSend: (fn) => (send = fn), menu: () => showMenu(play) }));
 else {
   setScreen('menu');
   showMenu(play);

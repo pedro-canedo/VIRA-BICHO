@@ -1,4 +1,4 @@
-import { ELEMS, formOf, type Look, type ServerMsg, type Stage } from '@vb/shared';
+import { ELEMS, formOf, GAME_MODES, isGameMode, MODES, type GameMode, type Look, type ServerMsg, type Stage } from '@vb/shared';
 import { creatureImg } from '../render/creature';
 import { showBestiary } from './bestiary';
 import { clearUi, fmtTime, h, mount } from './dom';
@@ -11,6 +11,8 @@ export interface PlayRequest {
   mode: 'quick' | 'create' | 'join';
   name: string;
   code?: string;
+  /** Modo da partida (partida rápida e sala nova; quem entra por código segue o da sala). */
+  gm?: GameMode;
 }
 
 function randomLook(): Look {
@@ -45,6 +47,63 @@ function writePref(key: string, v: string): void {
   } catch {
     // sem armazenamento: vale só nesta sessão
   }
+}
+
+const GM_KEY = 'vb.gm';
+
+/** Último modo escolhido (padrão: Rápido). */
+export function savedMode(): GameMode {
+  const v = readPref(GM_KEY, 'rapido');
+  return isGameMode(v) ? v : 'rapido';
+}
+
+/** "arena pequena", "4 habilidades"... (a descrição sem os minutos, que já aparecem no cartão). */
+function modeLines(gm: GameMode): string[] {
+  return MODES[gm].desc.split(' · ').filter((p) => !/^\d+ min$/.test(p));
+}
+
+/** Três cartões de modo (grupo de rádio). Guarda a escolha em 'vb.gm'. */
+function modePicker(onPick: (gm: GameMode) => void): HTMLElement {
+  let gm = savedMode();
+  const cards = GAME_MODES.map((id, i) => {
+    const m = MODES[id];
+    return h(
+      'button',
+      {
+        class: 'gmcard',
+        role: 'radio',
+        type: 'button',
+        onclick: () => pick(id),
+        onkeydown: (e: Event) => {
+          const k = (e as KeyboardEvent).key;
+          const d = k === 'ArrowRight' || k === 'ArrowDown' ? 1 : k === 'ArrowLeft' || k === 'ArrowUp' ? -1 : 0;
+          if (!d) return;
+          e.preventDefault();
+          const next = GAME_MODES[(i + d + GAME_MODES.length) % GAME_MODES.length];
+          pick(next);
+          cards[GAME_MODES.indexOf(next)].focus();
+        },
+      },
+      h('span', { class: 'gmic', 'aria-hidden': 'true' }, m.icon),
+      h('b', { class: 'gmname' }, m.name),
+      h('span', { class: 'gmmin' }, `${m.minutes} min`),
+      h('span', { class: 'gmdesc' }, ...modeLines(id).map((t) => h('span', {}, t))),
+    );
+  });
+  const pick = (id: GameMode) => {
+    gm = id;
+    writePref(GM_KEY, id);
+    cards.forEach((c, i) => {
+      const on = GAME_MODES[i] === id;
+      c.classList.toggle('on', on);
+      c.setAttribute('aria-checked', String(on));
+      c.tabIndex = on ? 0 : -1;
+    });
+    onPick(id);
+  };
+  const el = h('div', { class: 'gmpick', role: 'radiogroup', 'aria-label': 'Modo de jogo' }, ...cards);
+  pick(gm);
+  return el;
 }
 
 /** Seletor de qualidade dos efeitos ('vb.fx', lido pelo mundo) e chave da vibração ('vb.vibe'). */
@@ -123,6 +182,14 @@ export function showMenu(onPlay: (req: PlayRequest) => void, error = ''): void {
   refresh(false);
   previewTimer = window.setInterval(() => refresh(true), 2200);
 
+  let gm = savedMode();
+  const playBtn = h('button', { class: 'btn primary', onclick: () => go(invite ? 'join' : 'quick') });
+  const modes = modePicker((id) => {
+    gm = id;
+    if (!invite) playBtn.textContent = `▶ Jogar agora · ${MODES[id].icon} ${MODES[id].name}`;
+  });
+  if (invite) playBtn.textContent = `Entrar na sala ${invite}`;
+
   const go = (mode: PlayRequest['mode']) => {
     const name = nameInput.value.trim();
     if (!name) {
@@ -138,7 +205,7 @@ export function showMenu(onPlay: (req: PlayRequest) => void, error = ''): void {
     }
     localStorage.setItem('vb.name', name);
     window.clearInterval(previewTimer);
-    onPlay({ mode, name, code });
+    onPlay({ mode, name, code, gm: mode === 'join' ? undefined : gm });
   };
 
   mount(
@@ -156,15 +223,14 @@ export function showMenu(onPlay: (req: PlayRequest) => void, error = ''): void {
           'div',
           { class: 'card stack' },
           h('div', {}, h('div', { class: 'label' }, 'Apelido'), nameInput),
-          invite
-            ? h('button', { class: 'btn primary', onclick: () => go('join') }, `Entrar na sala ${invite}`)
-            : h('button', { class: 'btn primary', onclick: () => go('quick') }, '▶ Jogar agora'),
+          h('div', {}, h('div', { class: 'label' }, 'Modo de jogo'), modes),
+          playBtn,
           h('div', { class: 'row' }, h('button', { class: 'btn', onclick: () => go('create') }, 'Criar sala'), h('div', { style: 'display:flex;gap:6px' }, codeInput, h('button', { class: 'btn', onclick: () => go('join') }, 'Entrar'))),
           err,
         ),
         h('div', { class: 'row' }, h('button', { class: 'btn', onclick: showHelp }, 'Como jogar'), h('button', { class: 'btn', onclick: showBestiary }, 'Bestiário')),
         optionsCard(),
-        h('p', { class: 'tagline small' }, 'Partidas de ~5 min com 8 a 16 bichos. Faltou gente? Bots completam a arena.'),
+        h('p', { class: 'tagline small' }, 'Partidas de 5, 10 ou 30 min com 8 a 16 bichos. Faltou gente? Bots completam a arena.'),
         h('p', { class: 'tagline small' }, '📱 Este servidor roda num celular reaproveitado.'),
       ),
     ),
@@ -184,6 +250,8 @@ interface LobbyView {
   players: HTMLElement;
   count: HTMLElement;
   hint: HTMLElement;
+  mode: HTMLElement;
+  modeDesc: HTMLElement;
 }
 
 /** Quem já apareceu na sala (os chips novos entram com pop). */
@@ -210,6 +278,12 @@ export function showLobby(msg: Extract<ServerMsg, { t: 'lobby' }>, handlers: Lob
   v.count.textContent = msg.startsIn === null ? '...' : `Começa em ${fmtTime(msg.startsIn)}`;
   v.count.classList.toggle('hot', msg.startsIn !== null && msg.startsIn <= 5000);
   v.hint.textContent = bots ? `Se ninguém mais entrar, ${bots} bots completam a arena.` : 'Arena cheia de gente de verdade!';
+  // Modo da sala: só textos (nada de recriar botões)
+  const m = MODES[isGameMode(msg.gm) ? msg.gm : 'rapido'];
+  const modeTxt = `${m.icon} ${m.name} · ${m.minutes} min`;
+  if (v.mode.textContent !== modeTxt) v.mode.textContent = modeTxt;
+  const descTxt = modeLines(m.id).join(' · ');
+  if (v.modeDesc.textContent !== descTxt) v.modeDesc.textContent = descTxt;
 }
 
 function buildLobby(msg: Extract<ServerMsg, { t: 'lobby' }>, handlers: LobbyHandlers): LobbyView {
@@ -218,10 +292,13 @@ function buildLobby(msg: Extract<ServerMsg, { t: 'lobby' }>, handlers: LobbyHand
   const players = h('div', { class: 'players' });
   const count = h('div', { class: 'big-count' });
   const hint = h('p', { class: 'muted small', style: 'margin:0;text-align:center' });
+  const mode = h('b', { class: 'lbmode-name' });
+  const modeDesc = h('span', { class: 'muted small' });
   const body = h(
     'div',
     { class: 'stack' },
     h('h1', { class: 'logo', style: 'font-size:24px' }, msg.private ? 'Sala privada' : 'Arena'),
+    h('div', { class: 'lbmode' }, mode, modeDesc),
     h(
       'div',
       { class: 'card stack' },
@@ -263,5 +340,5 @@ function buildLobby(msg: Extract<ServerMsg, { t: 'lobby' }>, handlers: LobbyHand
   clearUi();
   lobbySeen.clear();
   const root = mount(h('section', { class: 'screen' }, motes(), body));
-  return { code: msg.code, root, label, players, count, hint };
+  return { code: msg.code, root, label, players, count, hint, mode, modeDesc };
 }

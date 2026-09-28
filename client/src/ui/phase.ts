@@ -12,10 +12,10 @@ interface PhaseLook {
 }
 
 export const PHASE_LOOK: Partial<Record<Phase, PhaseLook>> = {
-  coleta: { title: 'COLETA', color: '#52c95f', sub: 'Coma bichos para evoluir' },
+  coleta: { title: 'COLETA', color: '#52c95f', sub: 'Coma bichos, junte Essência e evolua' },
   cacada: { title: 'CAÇADA', color: '#ff7a3d', sub: 'PvP liberado · a zona fecha' },
   final: { title: 'FINAL', color: '#ff4f6d', sub: 'Sem selvagens · derrota custa 2 estágios' },
-  duelo: { title: 'DUELO FINAL', color: '#ff5fd2', bg: '#2a0840', sub: 'Os 2 mais evoluídos decidem tudo' },
+  duelo: { title: 'DUELO FINAL', color: '#ff5fd2', bg: '#2a0840', sub: 'Os 2 mais fortes decidem tudo' },
 };
 
 /** Selo mágico e faixa na virada de fase (sobreposição central, sem capturar toques). */
