@@ -74,8 +74,8 @@ describe('triângulo de ações', () => {
     expect(cc.chargedA && cc.chargedB).toBe(true);
   });
 
-  it('troféus aumentam o dano em 10% cada, até 3', () => {
-    const r = resolveTurn(fighter(neutral(3), { trophies: 5 }), fighter(neutral()), 'ataque', 'carga');
+  it('troféus aumentam o dano em 10% cada (o teto depende do modo e é aplicado pelo servidor)', () => {
+    const r = resolveTurn(fighter(neutral(3), { trophies: 3 }), fighter(neutral()), 'ataque', 'carga');
     expect(r.dmgToB).toBe(Math.round(BALANCE.dmg[3] * 1.3));
   });
 });

@@ -89,14 +89,14 @@ export function applyXp(state: { stage: Stage; xp: number }, amount: number): nu
 }
 
 const NAMES: Record<Form, [string, string, string, string]> = {
-  neutro: ['Ovo', 'Bolinha', 'Bolão', 'Bolota Suprema'],
-  brasa: ['Ovo morno', 'Fagulhinho', 'Chamurro', 'Infernaldo'],
-  mare: ['Ovo úmido', 'Gotinha', 'Marolo', 'Tsunamor'],
-  broto: ['Ovo verde', 'Brotinho', 'Folhudo', 'Florestão'],
-  vapor: ['Ovo quente', 'Fumacinha', 'Nevoão', 'Vaporzilla'],
-  cinza: ['Ovo tostado', 'Tiçãozinho', 'Carvolho', 'Cinzarrão'],
-  mangue: ['Ovo lodoso', 'Lodinho', 'Manguelo', 'Pantanoso'],
-  quimera: ['Ovo esquisito', 'Coisinha', 'Treco', 'Quimerão'],
+  neutro: ['Bolinha', 'Bolão', 'Bolotão', 'Bolota Suprema'],
+  brasa: ['Faísca', 'Fagulhinho', 'Chamurro', 'Infernaldo'],
+  mare: ['Pingo', 'Gotinha', 'Marolo', 'Tsunamor'],
+  broto: ['Semente', 'Brotinho', 'Folhudo', 'Florestão'],
+  vapor: ['Bafinho', 'Fumacinha', 'Nevoão', 'Vaporzilla'],
+  cinza: ['Brasinha', 'Tiçãozinho', 'Carvolho', 'Cinzarrão'],
+  mangue: ['Poçinha', 'Lodinho', 'Manguelo', 'Pantanoso'],
+  quimera: ['Grudinho', 'Coisinha', 'Treco', 'Quimerão'],
 };
 
 export const FORM_LABEL: Record<Form, string> = {
@@ -110,7 +110,9 @@ export const FORM_LABEL: Record<Form, string> = {
   quimera: 'Quimera',
 };
 
-export const STAGE_LABEL = ['Ovo', 'Filhote', 'Adulto', 'Forma final'] as const;
+export const STAGE_LABEL = ['Bebê', 'Filhote', 'Adulto', 'Forma final'] as const;
+/** Nível mostrado ao jogador (1 a 4). */
+export const levelOf = (s: Stage): number => s + 1;
 
 export function speciesName(form: Form, stage: Stage): string {
   return NAMES[form][stage];

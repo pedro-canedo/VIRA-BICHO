@@ -44,7 +44,7 @@ export const BALANCE = {
 
   trophyBonus: 0.1,
   trophyMax: 3,
-  /** Na fase Final e na Morte súbita, perder custa este número de estágios ("derrota dobrada"). */
+  /** Na fase Final, perder custa este número de estágios ("derrota dobrada"). */
   finalLossStages: 2,
   /** Fração dos pontos de tipo do perdedor absorvida pelo vencedor. */
   absorbFrac: 0.5,
@@ -105,6 +105,28 @@ export const BALANCE = {
     waitMs: 30_000,
     maxRooms: 10,
     endLingerMs: 20_000,
+  },
+
+  /** Essência: moeda da loja de habilidades. */
+  essence: {
+    start: 2,
+    wild: 1,
+    fruit: 2,
+    pvpWin: 3,
+    /** Bônus extra por derrubar quem está com a Coroa. */
+    crown: 3,
+    /** Por mandar alguém de volta ao ovo. */
+    kill: 2,
+  },
+
+  /** Ninguém é eliminado: quem morre renasce do ovo, perdendo parte do que juntou. */
+  respawn: {
+    /** Tempo chocando (sem andar, sem ser alvo) no início da partida e a cada renascimento. */
+    hatchMs: 2500,
+    essenceKeep: 0.5,
+    pointsKeep: 0.5,
+    /** Distância mínima (tiles) de outros jogadores ao renascer. */
+    minDist: 6,
   },
 
   /** Raio de visão enviado nos snapshots. */
