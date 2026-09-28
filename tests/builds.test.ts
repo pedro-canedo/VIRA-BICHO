@@ -324,6 +324,35 @@ describe('build no mundo', () => {
     expect(hunter.xp).toBe(2);
     expect(hunter.hpPct).toBeCloseTo(0.5 + BALANCE.healOnWildPct * 1.5);
   });
+
+  it('no Avançado a Essência rende menos, mas a fração acumula entre os ganhos', () => {
+    const { room, me, place, set, tick, runBattle } = setup({ gm: 'avancado' });
+    tick();
+    set(me, 1);
+    me.essence = 0;
+    const got: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      place(me, 0);
+      me.hp = room.maxHpOf(me);
+      const wild = [...room.wilds.values()][0];
+      wild.x = me.x + 1;
+      wild.y = me.y;
+      wild.path = [];
+      wild.wanderAt = Number.MAX_SAFE_INTEGER;
+      room.startBattle(me, wild);
+      wild.hp = 1;
+      const bt = me.battle!;
+      bt.autoAt.b = null;
+      bt.choice.b = 'carga';
+      room.act(me, 'ataque');
+      runBattle(me);
+      got.push(me.essence);
+    }
+    // 2 por selvagem × 0,45 = 0,9 → 0 · 1,8 → 1 · 2,7 → 2
+    const mult = MODES.avancado.essenceMult;
+    expect(got).toEqual([1, 2, 3].map((n) => Math.floor(n * BALANCE.essence.wild * mult + 1e-9)));
+    expect(me.stats.earned).toBe(got[2]);
+  });
 });
 
 // ------------------------------------------------------------------ build na batalha

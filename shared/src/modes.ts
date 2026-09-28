@@ -18,6 +18,8 @@ export interface ModeConfig {
   mastery: boolean;
   /** Máximo de troféus acumulados na forma final. */
   trophyMax: number;
+  /** Multiplica a Essência ganha: nos modos longos a build se completa mais perto do fim. */
+  essenceMult: number;
 }
 
 export const MODES: Record<GameMode, ModeConfig> = {
@@ -32,6 +34,7 @@ export const MODES: Record<GameMode, ModeConfig> = {
     slots: 4,
     mastery: false,
     trophyMax: 3,
+    essenceMult: 1,
   },
   classico: {
     id: 'classico',
@@ -44,6 +47,7 @@ export const MODES: Record<GameMode, ModeConfig> = {
     slots: 6,
     mastery: true,
     trophyMax: 5,
+    essenceMult: 1,
   },
   avancado: {
     id: 'avancado',
@@ -56,6 +60,7 @@ export const MODES: Record<GameMode, ModeConfig> = {
     slots: 8,
     mastery: true,
     trophyMax: 8,
+    essenceMult: 0.45,
   },
 };
 

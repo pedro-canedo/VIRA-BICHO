@@ -53,6 +53,8 @@ export interface Player extends EntityBase {
   history: HistoryItem[];
   /** buys = compras; earned = Essência ganha na partida (métricas e simulação). */
   stats: { wins: number; steals: number; wilds: number; deaths: number; buys: number; earned: number };
+  /** Fração de Essência acumulada pelo multiplicador do modo (vira inteiro ao completar 1). */
+  essenceFrac: number;
   /** Moeda da loja. */
   essence: number;
   /** Habilidades compradas, na ordem da compra. */

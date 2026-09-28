@@ -276,6 +276,7 @@ export class Room {
       place: 0,
       history: [],
       stats: { wins: 0, steals: 0, wilds: 0, deaths: 0, buys: 0, earned: 0 },
+      essenceFrac: 0,
       essence: BALANCE.essence.start,
       skills: [],
       mods: modsOf([]),
@@ -347,9 +348,14 @@ export class Room {
     if (p.history.length > 40) p.history.splice(1, 1);
   }
 
-  private earn(p: Player, n: number): void {
-    p.essence += n;
-    p.stats.earned += n;
+  /** Credita Essência com o multiplicador do modo; devolve quanto entrou de fato (inteiro). */
+  private earn(p: Player, n: number): number {
+    const total = n * this.mode.essenceMult + p.essenceFrac;
+    const whole = Math.floor(total + 1e-9);
+    p.essenceFrac = total - whole;
+    p.essence += whole;
+    p.stats.earned += whole;
+    return whole;
   }
 
   /** Muda o estágio preservando a fração de HP. */
@@ -645,8 +651,8 @@ export class Room {
       if (f.x !== p.x || f.y !== p.y || this.fruitRespawnAt[i] > this.now) return;
       this.fruitRespawnAt[i] = this.now + BALANCE.fruitRespawnMs;
       p.points[f.elem] += BALANCE.fruitPoints;
-      this.earn(p, BALANCE.essence.fruit);
-      this.toast(p, `Fruta rara! +${BALANCE.fruitPoints} de ${ELEM_NAME[f.elem]} e +${BALANCE.essence.fruit} ✨.`, true);
+      const got = this.earn(p, BALANCE.essence.fruit);
+      this.toast(p, `Fruta rara! +${BALANCE.fruitPoints} de ${ELEM_NAME[f.elem]}${got ? ` e +${got} ✨` : ''}.`, true);
       this.gainXp(p, BALANCE.fruitXp);
     });
   }
@@ -915,11 +921,10 @@ export class Room {
         a.hp = playerDown ? Math.round(mhp * BALANCE.wildLossHpPct) : Math.min(mhp, a.hp + mhp * BALANCE.healOnWildPct * a.mods.wildHealMult);
         a.points[b.elem] += 1;
         a.stats.wilds++;
-        const ess = BALANCE.essence.wild + a.mods.wildEssence;
-        this.earn(a, ess);
+        const ess = this.earn(a, BALANCE.essence.wild + a.mods.wildEssence);
         const hungry = a.hungerUntil > now;
         this.fx({ k: 'c', x: b.x, y: b.y, p: a.id, w: b.id, e: b.elem, ...(hungry ? { x2: 1 as const } : {}) });
-        this.endFor(a, bt, 'win', `Você comeu o bicho! +1 de ${ELEM_NAME[b.elem]} e +${ess} ✨${hungry ? ' (Fome: XP em dobro)' : ''}.`);
+        this.endFor(a, bt, 'win', `Você comeu o bicho! +1 de ${ELEM_NAME[b.elem]}${ess ? ` e +${ess} ✨` : ''}${hungry ? ' (Fome: XP em dobro)' : ''}.`);
         this.gainXp(a, (1 + a.mods.wildXp) * (hungry ? BALANCE.hungerXpMult : 1));
       } else if (playerDown) {
         a.hp = Math.round(this.maxHpOf(a) * BALANCE.wildLossHpPct);
@@ -960,19 +965,22 @@ export class Room {
     // Essência: vitória, Coroa e o roubo do Predador (tirado do perdedor).
     const stolen = Math.min(loser.essence, winner.mods.stealEssence);
     loser.essence -= stolen;
-    let ess = E.pvpWin + (wasCrown ? E.crown : 0) + stolen;
+    // O roubo do Predador é transferência exata; só o ganho passa pelo multiplicador do modo.
+    let ess = E.pvpWin + (wasCrown ? E.crown : 0);
     const robbed = stolen > 0 ? ` O Predador roubou ${stolen} ✨.` : '';
 
     if (loser.stage === 0) {
       ess += E.kill;
-      this.earn(winner, ess);
-      this.endFor(winner, bt, 'win', `Você derrotou ${loser.name}, que volta ao ovo! +${ess} ✨`);
+      const got = this.earn(winner, ess) + stolen;
+      winner.essence += stolen;
+      this.endFor(winner, bt, 'win', `Você derrotou ${loser.name}, que volta ao ovo! +${got} ✨`);
       this.endFor(loser, bt, 'lose', `${winner.name} te derrotou. Você vai renascer do ovo.${robbed}`);
       this.pushHistory(winner, `Derrotou ${loser.name}`);
       this.die(loser, winner, 'batalha');
       this.gainXp(winner, 2);
     } else {
-      this.earn(winner, ess);
+      ess = this.earn(winner, ess) + stolen;
+      winner.essence += stolen;
       const stolenStage = loser.stage;
       const lost = this.phase === 'final' ? BALANCE.finalLossStages : 1;
       this.setStage(loser, Math.max(0, loser.stage - lost) as Stage, BALANCE.loserHpPct);
